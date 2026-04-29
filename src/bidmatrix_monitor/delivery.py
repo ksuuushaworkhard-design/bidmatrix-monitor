@@ -89,14 +89,14 @@ def _telegram_message(subject: str, text: str, report_type: str) -> str:
     ]
 
     if items:
-        lines.extend(["", "<b>Top signals</b>"])
+        lines.extend(["", "<b>Top signal</b>" if len(items) == 1 else "<b>Top signals</b>"])
         for index, item in enumerate(items[:2], start=1):
             lines.extend(_telegram_item(item, index))
 
-    if background:
-        lines.extend(["", "<b>BACKGROUND</b>", html.escape(_executive_line(background, 120))])
+    if background and background != "No useful background context was kept.":
+        lines.extend(["", "<b>Strategic context</b>", html.escape(_executive_line(background, 140))])
 
-    return _truncate("\n".join(lines), 1700)
+    return _truncate_daily("\n".join(lines), 3200)
 
 
 def _telegram_weekly_message(subject: str, text: str) -> str:
@@ -203,6 +203,7 @@ def _report_items(text: str) -> list[dict[str, str]]:
                 "bidmatrix_angle": "",
                 "content_angle": "",
                 "action": "",
+                "watch_next": "",
                 "source": "",
             }
             continue
@@ -220,6 +221,8 @@ def _report_items(text: str) -> list[dict[str, str]]:
             current["content_angle"] = _clean_markdown_text(stripped.removeprefix("- Content angle:").strip())
         elif stripped.startswith("- Action:"):
             current["action"] = _clean_markdown_text(stripped.removeprefix("- Action:").strip())
+        elif stripped.startswith("- Watch next:"):
+            current["watch_next"] = _clean_markdown_text(stripped.removeprefix("- Watch next:").strip())
         elif stripped.startswith("- Source:"):
             current["source"] = _clean_markdown_text(stripped.removeprefix("- Source:").strip())
             url_match = re.search(r"\((https?://[^)]+)\)", stripped)
@@ -256,7 +259,11 @@ def _strip_markdown_emphasis(text: str) -> str:
 
 
 def _daily_intro_line(text: str) -> str:
-    match = re.search(r"## Today's Useful Signals\s+(.+?)\s+## Top Signals", text, flags=re.DOTALL)
+    match = re.search(
+        r"## Today's Useful Signal(?:s)?\s+(.+?)(?:\s+## Top Signal(?:s)?|\s+## Strategic Context|\Z)",
+        text,
+        flags=re.DOTALL,
+    )
     if not match:
         return "Today's brief uses the best relevant market signals available."
     return _clean_markdown_text(match.group(1).strip())
@@ -264,9 +271,14 @@ def _daily_intro_line(text: str) -> str:
 
 def _background_trend(text: str) -> str | None:
     lines = text.splitlines()
-    try:
-        start = lines.index("## Background / Context")
-    except ValueError:
+    start = None
+    for heading in ("## Strategic Context", "## Background / Context"):
+        try:
+            start = lines.index(heading)
+            break
+        except ValueError:
+            continue
+    if start is None:
         return None
     for line in lines[start + 1 :]:
         stripped = line.strip()
@@ -278,20 +290,30 @@ def _background_trend(text: str) -> str | None:
 
 
 def _telegram_item(item: dict[str, str], index: int) -> list[str]:
-    return [
-        f"{index}. {html.escape(_shorten(item['title'], 110))}",
+    lines = [
+        f"{index}. {html.escape(_shorten(item['title'], 180))}",
         "<b>What happened</b>",
-        html.escape(_executive_line(item.get("what_happened") or item["title"], 180)),
+        html.escape(_executive_line(item.get("what_happened") or item["title"], 260)),
         "<b>Why it matters</b>",
-        html.escape(_executive_line(item.get("why_it_matters") or item["title"], 140)),
+        html.escape(_executive_line(item.get("why_it_matters") or item["title"], 500)),
         "<b>BidMatrix angle</b>",
-        html.escape(_executive_line(item.get("bidmatrix_angle") or item.get("content_angle") or item["title"], 120)),
+        html.escape(_executive_line((item.get("bidmatrix_angle") or item.get("content_angle") or item["title"]).replace(": ", " — "), 320)),
+    ]
+    if item.get("content_angle"):
+        lines.extend([
+            "<b>Content angle</b>",
+            html.escape(_executive_line(item.get("content_angle"), 180)),
+        ])
+    lines.extend([
         "<b>Action</b>",
-        html.escape(_executive_line(item.get("action") or "Keep monitoring this signal for follow-up moves.", 120)),
+        html.escape(_executive_line(item.get("action") or item.get("watch_next") or "Keep monitoring this signal for follow-up moves.", 180)),
         "<b>Source</b>",
         html.escape(_source_name(item)),
-        "",
-    ]
+    ])
+    if item.get("url"):
+        lines.append(html.escape(item["url"]))
+    lines.append("")
+    return lines
 
 
 def _shorten(text: str, max_chars: int) -> str:
@@ -301,15 +323,22 @@ def _shorten(text: str, max_chars: int) -> str:
     for separator in [". ", "; ", ": ", ", while ", ", amid ", ", with ", ", and ", ", "]:
         head = cleaned.split(separator, 1)[0].strip()
         if 35 <= len(head) <= max_chars:
-            return head.rstrip(",;:-.") + "."
+            return _clean_trailing_fragment(head)
     cut = cleaned[:max_chars].rstrip()
     if " " in cut:
         cut = cut.rsplit(" ", 1)[0]
-    return cut.rstrip(",;:-.") + "."
+    return _clean_trailing_fragment(cut)
 
 
 def _source_name(item: dict[str, str]) -> str:
     return item.get("source") or item.get("url") or "source"
+
+def _clean_trailing_fragment(text: str) -> str:
+    cleaned = text.rstrip(',;:- ')
+    cleaned = re.sub(r"\b(and|but|with|for|into|across|against|including|allowing|using)$", "", cleaned, flags=re.IGNORECASE).strip(' ,;:-')
+    if cleaned and cleaned[-1] not in '.!?':
+        cleaned += '.'
+    return cleaned
 
 
 def _date_from_subject(subject: str) -> str:
@@ -347,7 +376,6 @@ def _polish_sentence(text: str) -> str:
         cleaned = re.sub(pattern, replacement, cleaned, flags=re.IGNORECASE)
 
     cleaned = cleaned.split(";")[0].strip()
-    cleaned = cleaned.split(" using ", 1)[0].strip()
     cleaned = re.sub(r"\bchanges for mobile growth teams\b", "matters for mobile growth teams", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\bbrand-safe supply\b", "safer, higher-quality ad inventory", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\bbrand safety\b", "ad safety", cleaned, flags=re.IGNORECASE)
@@ -402,6 +430,19 @@ def _truncate(text: str, max_chars: int) -> str:
     if len(text) <= max_chars:
         return text
     return text[: max_chars - 80].rstrip() + "\n\n[Truncated. Open the local Markdown report for the full brief.]"
+
+def _truncate_daily(text: str, max_chars: int) -> str:
+    if len(text) <= max_chars:
+        return text
+    marker = "<b>Source</b>"
+    idx = text.find(marker)
+    if idx != -1:
+        next_break = text.find("\n\n", idx)
+        if next_break != -1 and next_break < max_chars:
+            text = text[:next_break].rstrip()
+            if len(text) <= max_chars:
+                return text
+    return _truncate(text, max_chars)
 
 
 def _bool(value: object) -> bool:

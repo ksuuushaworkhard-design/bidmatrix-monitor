@@ -4,6 +4,7 @@ from bidmatrix_monitor.intelligence import build_report, dedupe_items
 from bidmatrix_monitor.models import MonitorConfig, NewsItem, OutputSettings, SearchSettings, SourceConfig, Topic
 from bidmatrix_monitor.render import render_markdown
 from bidmatrix_monitor.weekly import render_weekly_markdown
+from bidmatrix_monitor.delivery import _telegram_message
 
 
 def test_dedupe_keeps_highest_relevance_for_url() -> None:
@@ -346,3 +347,35 @@ def test_weekly_pr_angle_is_not_date_only_and_not_clipped() -> None:
     markdown = render_weekly_markdown(digest)
     assert "Announced" not in markdown
     assert "real-time." not in markdown
+
+
+
+def test_daily_telegram_message_includes_top_signal_fields() -> None:
+    markdown = """# BidMatrix Daily Brief - 2026-04-29
+
+## Today's Useful Signal
+Today's brief uses the best relevant signals from the last 72 hours.
+
+## Top Signal
+### 1. DAIVID x ADIN.AI — AI creative-effectiveness data moves closer to media optimization
+- What happened: DAIVID partnered with ADIN.AI to bring AI creative-effectiveness data into media optimization.
+- Why it matters: Creative intelligence is moving into live media decisioning.
+- Market context: Creative intelligence is moving from reporting into budget allocation.
+- BidMatrix angle: Useful for BidMatrix AI-native positioning.
+- Content angle: AI in user acquisition is starting to decide which creatives deserve budget.
+- Action: Track whether creative intelligence vendors integrate more directly with media buying platforms.
+- Watch next: Track whether creative intelligence vendors integrate more directly with media buying platforms.
+- Source: [DAIVID & ADIN.AI Partner](https://example.com/daivid) - exchangewire.com (high-signal) - confidence: high
+
+## Strategic Context
+- No useful background context was kept.
+"""
+    message = _telegram_message("BidMatrix Daily Market Brief - 2026-04-29", markdown, "daily")
+    assert "Top signal" in message
+    assert "What happened" in message
+    assert "Why it matters" in message
+    assert "BidMatrix angle" in message
+    assert "Content angle" in message
+    assert "Action" in message
+    assert "Source" in message
+    assert "https://example.com/daivid" in message
