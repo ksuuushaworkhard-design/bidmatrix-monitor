@@ -76,12 +76,25 @@ class NewsItem:
     published_date: str | None = None
     author: str | None = None
     source: str | None = None
+    company_or_topic: str = ""
     summary: str = ""
+    what_happened: str = ""
+    why_now: str = ""
+    market_context: str = ""
     why_it_matters: str = ""
+    why_it_matters_for_bidmatrix: str = ""
     opportunity: str = ""
+    bidmatrix_angle: str = ""
+    content_angle: str = ""
     linkedin_post_angle: str = ""
     pr_angle: str = ""
+    concrete_action: str = ""
     partner_or_sales_action: str = ""
+    watch_next: str = ""
+    source_title: str = ""
+    source_domain: str = ""
+    source_url: str = ""
+    confidence: str = "medium"
     hot_topics: list[str] = field(default_factory=list)
     mentioned_companies: list[str] = field(default_factory=list)
     signal_type: str = "top_news"
@@ -108,6 +121,8 @@ class MonitorReport:
     diagnostics: dict[str, Any]
     items: list[NewsItem]
     trends: list[tuple[str, int]]
+    daily_intro: str
+    daily_signals: list[NewsItem]
     top_news: list[NewsItem]
     actually_new_today: list[NewsItem]
     fresh_weak_confidence: list[NewsItem]

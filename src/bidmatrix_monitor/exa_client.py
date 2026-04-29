@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from typing import Any
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 from exa_py import Exa
@@ -11,7 +12,7 @@ from .models import MonitorConfig, NewsItem, Topic
 
 OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
-    "description": "Market intelligence extracted from fresh news for a mobile ad tech company.",
+    "description": "Market intelligence extracted from fresh news for a mobile ad tech company. Every development must be concrete, named, source-grounded, and useful for a market intelligence brief.",
     "required": ["developments"],
     "properties": {
         "developments": {
@@ -19,17 +20,32 @@ OUTPUT_SCHEMA: dict[str, Any] = {
             "description": "Relevant developments discovered in the search results.",
             "items": {
                 "type": "object",
-                "required": ["title", "url", "summary", "why_it_matters", "opportunity", "hot_topics"],
+                "required": [
+                    "title",
+                    "url",
+                    "company_or_topic",
+                    "signal_type",
+                    "what_happened",
+                    "why_now",
+                    "mentioned_companies",
+                    "hot_topics",
+                ],
                 "properties": {
                     "title": {"type": "string", "description": "Article or announcement title."},
                     "url": {"type": "string", "description": "Canonical source URL."},
                     "published_date": {"type": "string", "description": "Publication date in YYYY-MM-DD if available from the source."},
-                    "summary": {"type": "string", "description": "Compact factual summary in one sentence."},
-                    "why_it_matters": {"type": "string", "description": "Why this matters to mobile adtech, app growth, marketing, or BidMatrix positioning."},
-                    "opportunity": {"type": "string", "description": "Actionable LinkedIn, PR, sales, partner, or positioning opportunity."},
+                    "company_or_topic": {"type": "string", "description": "The main company, platform, product, report, or conference this signal is about."},
                     "signal_type": {
                         "type": "string",
-                        "description": "One of top_news, partner_signal, competitor_move, conference_signal, measurement_update, fraud_signal, creative_signal.",
+                        "description": "One of product_launch, funding, partnership, platform_update, privacy_measurement, fraud_quality, AI_marketing, conference, competitor_signal, market_report, other.",
+                    },
+                    "what_happened": {
+                        "type": "string",
+                        "description": "Concrete 2-3 sentence summary with named entities and specific details. Avoid generic filler.",
+                    },
+                    "why_now": {
+                        "type": "string",
+                        "description": "Why this matters right now, tied to recency, a launch, a market shift, a regulatory change, or a live go-to-market move.",
                     },
                     "mentioned_companies": {
                         "type": "array",
@@ -97,7 +113,9 @@ class ExaMonitorClient:
             f"Priority domains: {source_domains}. Tracked entities: {tracked_entities}. "
             f"Topic priority terms: {priority_keywords}. Deprioritize generic syndicated PR/newswire "
             f"content and thin reposts, especially: {low_value_domains}. Return published_date when the "
-            "page or article clearly provides it. Return only developments with a clear business implication."
+            "page or article clearly provides it. Return only developments with a clear business implication. "
+            "Do not return generic filler such as 'supports privacy-safe growth' or 'watch follow-up moves' unless you add specifics. "
+            "Every development must answer: what happened, why now, and what BidMatrix can do with it."
         )
         if layer == "daily_fresh_signals":
             return (
@@ -106,13 +124,14 @@ class ExaMonitorClient:
                 "company newsroom posts, product update blogs, release notes, changelogs, conference news and "
                 "announcement pages, agenda/speaker/sponsor updates, and trusted adtech/app-growth media with "
                 "frequent updates. Avoid evergreen product pages, generic lists, old reports, and long-form "
-                "background explainers unless they contain a dated announcement in the last 72 hours."
+                "background explainers unless they contain a dated announcement in the last 72 hours. "
+                "Prefer named companies, products, conferences, reports, and platforms over broad themes."
             )
         return (
             f"{shared} Search layer: strategic_background. Include evergreen reports, benchmark pages, "
             "thought leadership, product pages, and long-form explainers only when they provide strategic "
             "context for market positioning, partner/competitor tracking, or recurring trends. Do not treat "
-            "undated evergreen content as daily news."
+            "undated evergreen content as daily news. Prefer concrete named signals over abstract thought leadership."
         )
 
 
@@ -131,24 +150,29 @@ def _items_from_response(response: Any, topic: Topic, layer: str) -> list[NewsIt
     for raw in developments:
         if not isinstance(raw, dict) or not raw.get("url") or not raw.get("title"):
             continue
+        url = str(raw.get("url", "")).strip()
         items.append(
             NewsItem(
                 topic_id=topic.id,
                 topic_label=topic.label,
                 title=str(raw.get("title", "")).strip(),
-                url=str(raw.get("url", "")).strip(),
+                url=url,
                 published_date=_optional_string(raw.get("published_date")),
                 source=_optional_string(raw.get("source")),
-                summary=str(raw.get("summary", "")).strip(),
-                why_it_matters=str(raw.get("why_it_matters", "")).strip(),
-                opportunity=str(raw.get("opportunity", "")).strip(),
+                company_or_topic=str(raw.get("company_or_topic", "")).strip(),
+                summary=str(raw.get("what_happened", "")).strip(),
+                what_happened=str(raw.get("what_happened", "")).strip(),
+                why_now=str(raw.get("why_now", "")).strip(),
                 hot_topics=[str(value).strip() for value in raw.get("hot_topics", []) if str(value).strip()],
                 mentioned_companies=[
                     str(value).strip() for value in raw.get("mentioned_companies", []) if str(value).strip()
                 ],
-                signal_type=str(raw.get("signal_type", "top_news")).strip() or "top_news",
+                signal_type=str(raw.get("signal_type", "other")).strip() or "other",
+                source_title=str(raw.get("title", "")).strip(),
+                source_domain=urlparse(url).netloc.lower().removeprefix("www."),
+                source_url=url,
                 monitoring_layer=layer,
-                citations=_citations_for_url(grounding, str(raw.get("url", ""))),
+                citations=_citations_for_url(grounding, url),
                 relevance_score=_int_score(raw.get("relevance_score")),
             )
         )

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -16,7 +17,7 @@ def write_report(report: MonitorReport, report_dir: str | Path) -> tuple[Path, P
     json_path = output_dir / f"{stem}.json"
     curated_json_path = output_dir / f"{stem}-curated.json"
 
-    markdown_path.write_text(render_markdown(report), encoding="utf-8")
+    markdown_path.write_text(_strip_diagnostics(render_markdown(report)), encoding="utf-8")
     json_path.write_text(json.dumps(_report_to_dict(report), indent=2, ensure_ascii=False), encoding="utf-8")
     curated_json_path.write_text(json.dumps(_curated_report_to_dict(report), indent=2, ensure_ascii=False), encoding="utf-8")
     return markdown_path, json_path, curated_json_path
@@ -24,74 +25,35 @@ def write_report(report: MonitorReport, report_dir: str | Path) -> tuple[Path, P
 
 def render_markdown(report: MonitorReport) -> str:
     lines = [
-        f"# BidMatrix Market Brief - {report.run_date.isoformat()}",
+        f"# BidMatrix Daily Brief - {report.run_date.isoformat()}",
         "",
-        _brief_summary(report),
-        "",
-        "## Summary",
+        "## Today's Useful Signal" if len(report.daily_signals) == 1 else "## Today's Useful Signals",
+        report.daily_intro,
     ]
-    lines.extend(_diagnostic_summary(report))
+    if report.daily_signals:
+        lines.extend(["", "## Top Signal" if len(report.daily_signals) == 1 else "## Top Signals"])
+        lines.extend(_daily_signal_cards(report.daily_signals))
     lines.extend([
         "",
-        "## Actually New Today",
+        "## Strategic Context",
     ])
-    lines.extend(_item_cards(report.actually_new_today, empty="No high-confidence items were dated today."))
-
-    lines.extend(["", "## Fresh But Weak Confidence"])
-    lines.extend(
-        _item_cards(
-            report.fresh_weak_confidence,
-            empty="No uncertain fresh items were kept.",
-        )
-    )
-
-    lines.extend(["", "## New This Week"])
-    lines.extend(
-        _item_cards(
-            [
-                item
-                for item in report.top_news
-                if item.freshness_tier == "new_last_7d"
-                and item not in report.fresh_weak_confidence
-            ],
-            empty="No high-confidence items were dated in the last 7 days.",
-        )
-    )
-
-    lines.extend(["", "## 1. Top 5 Market Moves"])
-    lines.extend(_item_cards(report.top_news[:5]))
-
-    lines.extend(["", "## 2. Hot Takes And Emerging Debates"])
-    lines.extend(_bullets(report.hot_takes[:6], "No clear debate emerged from today's curated signals."))
-
-    lines.extend(["", "## 3. Partner And Competitor Signals"])
-    combined_signals = _merge_items(report.partner_signals, report.competitor_moves, limit=8)
-    lines.extend(_item_cards(combined_signals, empty="No tracked partner or competitor signal found."))
-
-    lines.extend(["", "## 4. LinkedIn Content Angles For BidMatrix"])
-    lines.extend(_bullets(report.content_angles_for_linkedin[:6], "No ready LinkedIn angle found."))
-
-    lines.extend(["", "## 5. PR / Positioning Opportunities"])
-    lines.extend(_bullets(report.pr_hooks[:6], "No PR or positioning hook found."))
-
-    lines.extend(["", "## 6. What Changed Today"])
-    lines.extend(_bullets(report.what_changed_today[:8], "No clear market change crossed the relevance bar today."))
-
-    lines.extend(["", "## 7. Why This Matters For App Advertisers"])
-    lines.extend(_bullets(_why_advertisers_care(report), "No advertiser-specific implication found."))
-
-    lines.extend(["", "## Background Context"])
-    lines.extend(_item_cards(report.background_items, empty="No older strategic background items included."))
+    lines.extend(_background_context(report))
 
     lines.append("")
     return "\n".join(lines)
 
 
-def _brief_summary(report: MonitorReport) -> str:
-    if not report.items:
-        return "No curated items were found for today."
-    top_topics = ", ".join(topic.title() for topic, _count in report.trends[:3]) or "mobile growth and adtech"
-    return f"{len(report.items)} curated signals. Main themes: {top_topics}."
+def _strip_diagnostics(markdown: str) -> str:
+    lines = markdown.splitlines()
+    try:
+        index = lines.index("## Diagnostic Summary")
+    except ValueError:
+        return markdown
+    cleaned = lines[:index]
+    while cleaned and cleaned[-1] == "":
+        cleaned.pop()
+    cleaned.append("")
+    return "\n".join(cleaned)
 
 
 def _diagnostic_summary(report: MonitorReport) -> list[str]:
@@ -160,6 +122,47 @@ def _item_cards(items: list[NewsItem], empty: str = "No items found.") -> list[s
     return lines
 
 
+def _daily_signal_cards(items: list[NewsItem]) -> list[str]:
+    lines: list[str] = []
+    for index, item in enumerate(items, start=1):
+        entity = _lead_entity(item)
+        title = _event_line(item, entity)
+        lines.extend(
+            [
+                f"### {index}. {title}",
+                f"- What happened: {_sentence(item.what_happened or _what_happened(item))}",
+                f"- Why it matters: {_sentence(item.why_now or _why_it_matters(item))}",
+                f"- Market context: {_sentence(_market_context_line(item))}",
+                f"- BidMatrix angle: {_sentence(item.why_it_matters_for_bidmatrix or item.bidmatrix_angle or item.why_it_matters)}",
+                f"- Content angle: {_sentence(item.content_angle or item.linkedin_post_angle)}",
+                f"- Action: {_sentence(item.concrete_action or item.partner_or_sales_action)}",
+                f"- Watch next: {_sentence(item.watch_next)}",
+                f"- Source: [{item.source_title or item.title}]({item.source_url or item.url}) - {_source_label(item)} - confidence: {item.confidence}",
+                "",
+            ]
+        )
+    return lines[:-1] if lines else ["- No usable signal cards were generated."]
+
+
+def _background_context(report: MonitorReport) -> list[str]:
+    values: list[str] = []
+    seen: set[str] = set()
+    for item in report.background_items:
+        text = _clean_text(item.market_context or item.why_now or item.why_it_matters or item.summary)
+        if not text or text.lower() in seen:
+            continue
+        seen.add(text.lower())
+        date_label = item.published_date or "unknown"
+        values.append(
+            f"- Background context, not a fresh daily signal. {text} Source: [{item.title}]({item.url}) | Date: {date_label}"
+        )
+        if len(values) >= 2:
+            break
+    if not values:
+        return ["- No useful background context was kept."]
+    return values
+
+
 def _bullets(values: list[str], empty: str) -> list[str]:
     if not values:
         return [f"- {empty}"]
@@ -211,6 +214,58 @@ def _source_label(item: NewsItem) -> str:
     return label
 
 
+def _event_line(item: NewsItem, entity: str) -> str:
+    prefix = entity or item.topic_label
+    event = _clean_text(item.summary or item.title)
+    if entity and event.lower().startswith(entity.lower()):
+        event = event[len(entity):].lstrip(" -,:")
+    return f"{prefix} — {event}"
+
+
+def _what_happened(item: NewsItem) -> str:
+    parts = [_sentence(item.what_happened or item.summary), _sentence(_concrete_detail(item))]
+    return " ".join(value for value in parts if value)
+
+
+def _market_context_line(item: NewsItem) -> str:
+    candidate = item.market_context or item.why_it_matters or item.why_now or item.summary
+    if _same_meaning(candidate, item.what_happened or item.summary):
+        return item.why_now or item.why_it_matters or candidate
+    return candidate
+
+
+def _why_it_matters(item: NewsItem) -> str:
+    return _sentence(item.why_now or item.why_it_matters or item.pr_angle or item.summary)
+
+
+def _concrete_detail(item: NewsItem) -> str:
+    details = []
+    if item.published_date:
+        details.append(f"The source dates it to {item.published_date}.")
+    if item.mentioned_companies:
+        details.append(f"Named entities include {', '.join(item.mentioned_companies[:4])}.")
+    if item.hot_topics:
+        details.append(f"It touches {', '.join(item.hot_topics[:3])}.")
+    return " ".join(details[:2])
+
+
+def _sentence(value: str) -> str:
+    text = _clean_text(value)
+    if not text:
+        return ""
+    if text[-1] not in ".!?":
+        text += "."
+    return text[0].upper() + text[1:]
+
+
+def _lead_entity(item: NewsItem) -> str:
+    if item.company_or_topic:
+        return item.company_or_topic
+    if item.mentioned_companies:
+        return item.mentioned_companies[0]
+    return item.title.split(":", 1)[0].split("-", 1)[0].strip()
+
+
 def _why_advertisers_care(report: MonitorReport) -> list[str]:
     implications = []
     for item in report.items:
@@ -222,6 +277,17 @@ def _why_advertisers_care(report: MonitorReport) -> list[str]:
     if not implications:
         implications = [item.why_it_matters or item.summary for item in report.top_news if item.why_it_matters or item.summary]
     return _unique_clean(implications)[:6]
+
+
+def _same_meaning(first: str, second: str) -> bool:
+    left = re.sub(r"[^a-z0-9]+", " ", str(first).lower()).split()
+    right = re.sub(r"[^a-z0-9]+", " ", str(second).lower()).split()
+    if not left or not right:
+        return False
+    left_set = set(left)
+    right_set = set(right)
+    overlap = len(left_set & right_set) / max(1, min(len(left_set), len(right_set)))
+    return overlap >= 0.75
 
 
 def _clean_text(value: str) -> str:
@@ -310,6 +376,8 @@ def _report_to_dict(report: MonitorReport) -> dict:
         "diagnostics": report.diagnostics,
         "items": [_item_to_dict(item) for item in report.items],
         "trends": [{"topic": trend, "mentions": count} for trend, count in report.trends],
+        "daily_intro": report.daily_intro,
+        "daily_signals": [_item_to_dict(item) for item in report.daily_signals],
         "top_news": [_item_to_dict(item) for item in report.top_news],
         "actually_new_today": [_item_to_dict(item) for item in report.actually_new_today],
         "fresh_weak_confidence": [_item_to_dict(item) for item in report.fresh_weak_confidence],
@@ -327,6 +395,8 @@ def _curated_report_to_dict(report: MonitorReport) -> dict:
     return {
         "run_date": report.run_date.isoformat(),
         "diagnostics": report.diagnostics,
+        "daily_intro": report.daily_intro,
+        "daily_signals": [_curated_item(item) for item in report.daily_signals],
         "top_news": [_curated_item(item) for item in report.top_news],
         "actually_new_today": [_curated_item(item) for item in report.actually_new_today],
         "fresh_weak_confidence": [_curated_item(item) for item in report.fresh_weak_confidence],
@@ -349,12 +419,25 @@ def _item_to_dict(item: NewsItem) -> dict:
         "published_date": item.published_date,
         "author": item.author,
         "source": item.source,
+        "company_or_topic": item.company_or_topic,
         "summary": item.summary,
+        "what_happened": item.what_happened,
+        "why_now": item.why_now,
+        "market_context": item.market_context,
         "why_it_matters": item.why_it_matters,
+        "why_it_matters_for_bidmatrix": item.why_it_matters_for_bidmatrix,
         "opportunity": item.opportunity,
+        "bidmatrix_angle": item.bidmatrix_angle,
+        "content_angle": item.content_angle,
         "linkedin_post_angle": item.linkedin_post_angle,
         "pr_angle": item.pr_angle,
+        "concrete_action": item.concrete_action,
         "partner_or_sales_action": item.partner_or_sales_action,
+        "watch_next": item.watch_next,
+        "source_title": item.source_title,
+        "source_domain": item.source_domain,
+        "source_url": item.source_url,
+        "confidence": item.confidence,
         "hot_topics": item.hot_topics,
         "mentioned_companies": item.mentioned_companies,
         "signal_type": item.signal_type,
@@ -379,6 +462,7 @@ def _curated_item(item: NewsItem) -> dict:
         "url": item.url,
         "source": item.source,
         "source_label": _source_label(item),
+        "company_or_topic": item.company_or_topic,
         "published_date": item.published_date,
         "signal_type": item.signal_type,
         "monitoring_layer": item.monitoring_layer,
@@ -388,10 +472,22 @@ def _curated_item(item: NewsItem) -> dict:
         "date_quality": item.date_quality,
         "freshness_confidence": item.freshness_confidence,
         "summary": item.summary,
+        "what_happened": item.what_happened,
+        "why_now": item.why_now,
+        "market_context": item.market_context,
         "why_it_matters": item.why_it_matters,
+        "why_it_matters_for_bidmatrix": item.why_it_matters_for_bidmatrix,
+        "bidmatrix_angle": item.bidmatrix_angle,
+        "content_angle": item.content_angle,
         "linkedin_post_angle": item.linkedin_post_angle,
         "pr_angle": item.pr_angle,
+        "concrete_action": item.concrete_action,
         "partner_or_sales_action": item.partner_or_sales_action,
+        "watch_next": item.watch_next,
+        "source_title": item.source_title,
+        "source_domain": item.source_domain,
+        "source_url": item.source_url,
+        "confidence": item.confidence,
         "hot_topics": item.hot_topics,
         "mentioned_companies": item.mentioned_companies,
         "score": item.final_score,

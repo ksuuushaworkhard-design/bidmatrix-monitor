@@ -68,49 +68,44 @@ def _telegram_message(subject: str, text: str, report_type: str) -> str:
     if report_type != "daily":
         return _telegram_weekly_message(subject, text)
 
-    new_today = _summary_value(text, "New today count")
-    new_week = _summary_value(text, "New this week count")
-    items = _report_items(text)
-    if _int_value(new_today) > 0:
-        top_signals = _fresh_signals(items, limit=2, include_week=True)
-        background_trend = None
-    else:
-        top_signals = _fresh_signals(items, limit=1, include_week=True)
-        background_trend = _background_trend(items)
-
     date_label = _date_from_subject(subject)
+    if "Daily brief skipped: not enough relevant market signals found today." in text:
+        return "\n".join(
+            [
+                f"<b>BidMatrix Daily Brief — {html.escape(date_label)}</b>",
+                "",
+                "Daily brief skipped: not enough relevant market signals found today.",
+            ]
+        )
+
+    items = _report_items(text)
+    intro = _daily_intro_line(text)
+    background = _background_trend(text)
     lines = [
         f"<b>BidMatrix Daily Brief — {html.escape(date_label)}</b>",
         "",
-        f"<b>New today:</b> {html.escape(new_today)} | <b>New this week:</b> {html.escape(new_week)}",
+        "<b>Today's useful signals</b>",
+        html.escape(_shorten(intro, 180)),
     ]
-    if top_signals:
-        lines.extend(_telegram_item(top_signals[0], "TOP SIGNAL"))
-    else:
-        lines.extend(["", "<b>TOP SIGNAL</b>", "No strong fresh signal today."])
 
-    if background_trend:
-        lines.extend(
-            [
-                "",
-                "<b>BACKGROUND</b>",
-                html.escape(
-                    _executive_line(
-                        background_trend.get("why_it_matters")
-                        or background_trend.get("summary")
-                        or background_trend["title"],
-                        105,
-                    )
-                ),
-            ]
-        )
+    if items:
+        lines.extend(["", "<b>Top signals</b>"])
+        for index, item in enumerate(items[:2], start=1):
+            lines.extend(_telegram_item(item, index))
+
+    if background:
+        lines.extend(["", "<b>BACKGROUND</b>", html.escape(_executive_line(background, 120))])
+
     return _truncate("\n".join(lines), 1700)
 
 
 def _telegram_weekly_message(subject: str, text: str) -> str:
     date_label = _date_from_subject(subject)
     sections = _weekly_sections(text)
-    week_line = _first_bullet(sections.get("1. Week In One Line", []), "This was a light week with a small number of useful signals.")
+    week_line = _first_bullet(
+        sections.get("1. Week In One Line", []),
+        "This was a light week with a small number of useful signals.",
+    )
     happened = sections.get("2. What Actually Happened This Week", [])[:2]
     suggests = sections.get("3. What This Suggests", [])[:2]
     matters = sections.get("4. Why It Matters For BidMatrix", [])[:2]
@@ -190,57 +185,48 @@ def _subject(report_type: str, markdown_path: Path) -> str:
     return f"BidMatrix {label} Market Brief - {date_label}"
 
 
-def _summary_value(text: str, label: str) -> str:
-    match = re.search(rf"^- {re.escape(label)}:\s*(.+)$", text, flags=re.MULTILINE)
-    return match.group(1).strip() if match else "unknown"
-
-
 def _report_items(text: str) -> list[dict[str, str]]:
     items: list[dict[str, str]] = []
-    current_section = ""
     current: dict[str, str] | None = None
-    seen_urls: set[str] = set()
 
     for line in text.splitlines():
         stripped = line.strip()
-        if stripped.startswith("## "):
-            current_section = stripped.removeprefix("## ").strip()
-            continue
-
-        heading = re.match(r"^### \[(?P<title>[^\]]+)\]\((?P<url>[^)]+)\)$", stripped)
+        heading = re.match(r"^### (?P<rank>\d+)\.\s+(?P<title>.+)$", stripped)
         if heading:
-            if current and current["url"] not in seen_urls:
+            if current:
                 items.append(current)
-                seen_urls.add(current["url"])
             current = {
-                "section": current_section,
                 "title": _clean_markdown_text(heading.group("title")),
-                "url": heading.group("url").strip(),
-                "meta": "",
-                "summary": "",
+                "url": "",
+                "what_happened": "",
                 "why_it_matters": "",
                 "bidmatrix_angle": "",
-                "suggested_action": "",
+                "content_angle": "",
+                "action": "",
+                "source": "",
             }
             continue
 
         if current is None:
             continue
 
-        if stripped.startswith("_Source:"):
-            current["meta"] = _clean_markdown_text(stripped)
-        elif stripped.startswith("- Market move:"):
-            current["summary"] = _clean_markdown_text(stripped.removeprefix("- Market move:").strip())
-        elif stripped.startswith("- PR angle:"):
-            current["why_it_matters"] = _clean_markdown_text(stripped.removeprefix("- PR angle:").strip())
-        elif stripped.startswith("- LinkedIn angle:"):
-            current["bidmatrix_angle"] = _clean_markdown_text(stripped.removeprefix("- LinkedIn angle:").strip())
-        elif stripped.startswith("- Partner/sales action:"):
-            current["suggested_action"] = _clean_markdown_text(
-                stripped.removeprefix("- Partner/sales action:").strip()
-            )
+        if stripped.startswith("- What happened:"):
+            current["what_happened"] = _clean_markdown_text(stripped.removeprefix("- What happened:").strip())
+        elif stripped.startswith("- Why it matters:"):
+            current["why_it_matters"] = _clean_markdown_text(stripped.removeprefix("- Why it matters:").strip())
+        elif stripped.startswith("- BidMatrix angle:"):
+            current["bidmatrix_angle"] = _clean_markdown_text(stripped.removeprefix("- BidMatrix angle:").strip())
+        elif stripped.startswith("- Content angle:"):
+            current["content_angle"] = _clean_markdown_text(stripped.removeprefix("- Content angle:").strip())
+        elif stripped.startswith("- Action:"):
+            current["action"] = _clean_markdown_text(stripped.removeprefix("- Action:").strip())
+        elif stripped.startswith("- Source:"):
+            current["source"] = _clean_markdown_text(stripped.removeprefix("- Source:").strip())
+            url_match = re.search(r"\((https?://[^)]+)\)", stripped)
+            if url_match:
+                current["url"] = url_match.group(1)
 
-    if current and current["url"] not in seen_urls:
+    if current:
         items.append(current)
     return items
 
@@ -269,59 +255,43 @@ def _strip_markdown_emphasis(text: str) -> str:
     return text.replace("**", "")
 
 
-def _fresh_signals(items: list[dict[str, str]], limit: int, include_week: bool = True) -> list[dict[str, str]]:
-    allowed = {"new last 24h", "new last 7d"} if include_week else {"new last 24h"}
-    fresh = [
-        item
-        for item in items
-        if _freshness(item) in allowed
-        and ("must read" in item.get("meta", "").lower() or item.get("section") in {"Actually New Today", "Fresh But Weak Confidence", "New This Week", "1. Top 5 Market Moves"})
-    ]
-    return _unique_items(fresh)[:limit]
+def _daily_intro_line(text: str) -> str:
+    match = re.search(r"## Today's Useful Signals\s+(.+?)\s+## Top Signals", text, flags=re.DOTALL)
+    if not match:
+        return "Today's brief uses the best relevant market signals available."
+    return _clean_markdown_text(match.group(1).strip())
 
 
-def _background_trend(items: list[dict[str, str]]) -> dict[str, str] | None:
-    for item in items:
-        if item.get("section") == "Background Context":
-            return item
+def _background_trend(text: str) -> str | None:
+    lines = text.splitlines()
+    try:
+        start = lines.index("## Background / Context")
+    except ValueError:
+        return None
+    for line in lines[start + 1 :]:
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            break
+        if stripped.startswith("- "):
+            return _clean_markdown_text(stripped.removeprefix("- ").strip())
     return None
 
 
-def _telegram_item(item: dict[str, str], heading: str) -> list[str]:
+def _telegram_item(item: dict[str, str], index: int) -> list[str]:
     return [
-        "",
-        f"<b>{heading}</b>",
-        html.escape(_executive_line(item.get("summary") or item["title"], 105)),
-        "",
+        f"{index}. {html.escape(_shorten(item['title'], 110))}",
+        "<b>What happened</b>",
+        html.escape(_executive_line(item.get("what_happened") or item["title"], 180)),
         "<b>Why it matters</b>",
-        html.escape(_executive_line(item.get("why_it_matters") or item.get("summary") or item["title"], 105)),
-        "",
+        html.escape(_executive_line(item.get("why_it_matters") or item["title"], 140)),
         "<b>BidMatrix angle</b>",
-        html.escape(_bidmatrix_angle_line(item)),
-        "",
+        html.escape(_executive_line(item.get("bidmatrix_angle") or item.get("content_angle") or item["title"], 120)),
         "<b>Action</b>",
-        html.escape(_action_line(item)),
-        "",
+        html.escape(_executive_line(item.get("action") or "Keep monitoring this signal for follow-up moves.", 120)),
         "<b>Source</b>",
         html.escape(_source_name(item)),
+        "",
     ]
-
-
-def _freshness(item: dict[str, str]) -> str:
-    match = re.search(r"Freshness:\s*([^|]+)", item.get("meta", ""), flags=re.IGNORECASE)
-    return match.group(1).strip().lower() if match else ""
-
-
-def _unique_items(items: list[dict[str, str]]) -> list[dict[str, str]]:
-    unique = []
-    seen: set[str] = set()
-    for item in items:
-        url = item["url"]
-        if url in seen:
-            continue
-        seen.add(url)
-        unique.append(item)
-    return unique
 
 
 def _shorten(text: str, max_chars: int) -> str:
@@ -339,12 +309,7 @@ def _shorten(text: str, max_chars: int) -> str:
 
 
 def _source_name(item: dict[str, str]) -> str:
-    meta = item.get("meta", "")
-    match = re.search(r"Source:\s*([^|]+)", meta, flags=re.IGNORECASE)
-    if match:
-        return match.group(1).strip()
-    url_match = re.match(r"https?://([^/]+)", item["url"])
-    return url_match.group(1).removeprefix("www.") if url_match else "source"
+    return item.get("source") or item.get("url") or "source"
 
 
 def _date_from_subject(subject: str) -> str:
@@ -352,44 +317,10 @@ def _date_from_subject(subject: str) -> str:
     return match.group(1) if match else subject
 
 
-def _int_value(value: str) -> int:
-    match = re.search(r"\d+", value)
-    return int(match.group(0)) if match else 0
-
-
 def _executive_line(text: str, max_chars: int) -> str:
     cleaned = _polish_sentence(text)
     cleaned = _naturalize_sentence(cleaned)
     return _shorten(cleaned, max_chars)
-
-
-def _bidmatrix_angle_line(item: dict[str, str]) -> str:
-    base = _polish_sentence(item.get("bidmatrix_angle") or "")
-    lowered = base.lower()
-    if any(term in lowered for term in ["brand safety", "traffic quality", "fraud"]):
-        return "Strengthens the case for BidMatrix around safer, higher-quality ad inventory."
-    if any(term in lowered for term in ["monetization", "yield", "ssp", "programmatic"]):
-        return "Supports BidMatrix positioning around helping apps make more money from better ad demand."
-    if any(term in lowered for term in ["ai", "creative", "measurement", "attribution"]):
-        return "Supports BidMatrix's position on smarter growth, clearer measurement, and better-performing campaigns."
-    if any(term in lowered for term in ["privacy", "sandbox", "skan"]):
-        return "Supports BidMatrix positioning around privacy-safe growth and more reliable measurement."
-    return _executive_line(base or item.get("why_it_matters") or item.get("summary") or item["title"], 105)
-
-
-def _action_line(item: dict[str, str]) -> str:
-    action = _polish_sentence(item.get("suggested_action") or "")
-    companies = ", ".join(item.get("suggested_action", "").strip().rstrip(".").split(" with ")[-1].split(",")[:3]).strip()
-    lowered = action.lower()
-    if companies and companies != action:
-        return _shorten(f"Watch follow-up moves from {companies}.", 95)
-    if any(term in lowered for term in ["partner", "outreach", "sales"]):
-        return "Use this signal in partner outreach and market positioning."
-    if any(term in lowered for term in ["benchmark", "index", "report"]):
-        return "Track whether similar benchmarks spread across other supply partners."
-    if any(term in lowered for term in ["launch", "product", "release"]):
-        return "Watch for follow-on launches, integrations, and partner responses."
-    return _executive_line(action or "Use this signal in partner outreach and market positioning.", 95)
 
 
 def _polish_sentence(text: str) -> str:
@@ -418,10 +349,8 @@ def _polish_sentence(text: str) -> str:
     cleaned = cleaned.split(";")[0].strip()
     cleaned = cleaned.split(" using ", 1)[0].strip()
     cleaned = re.sub(r"\bchanges for mobile growth teams\b", "matters for mobile growth teams", cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r"\bwhat\b", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\bbrand-safe supply\b", "safer, higher-quality ad inventory", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\bbrand safety\b", "ad safety", cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r"\btraffic quality\b", "traffic quality", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\bARPU\b", "revenue", cleaned)
     cleaned = re.sub(r"\bpublisher monetization\b", "how apps make money from ads", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\bmonetization\b", "how apps make money from ads", cleaned, flags=re.IGNORECASE)
@@ -431,7 +360,6 @@ def _polish_sentence(text: str) -> str:
     cleaned = re.sub(r"\bintrusive ads\b", "disruptive ads", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\bprogrammatic\b", "automated ad buying", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\bbenchmarking\b", "ranking", cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r"\bad networks\b", "ad networks", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\buser experience\b", "user-friendly", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\bsupply\b", "inventory", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\bpublisher yield\b", "app ad revenue", cleaned, flags=re.IGNORECASE)
@@ -446,22 +374,6 @@ def _polish_sentence(text: str) -> str:
     return cleaned
 
 
-def _compact_markdown(text: str, max_chars: int) -> str:
-    lines = []
-    for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        if stripped.startswith("# "):
-            continue
-        if stripped.startswith("## Background Context"):
-            break
-        lines.append(_clean_markdown_text(stripped))
-        if len("\n".join(lines)) >= max_chars:
-            break
-    return _truncate("\n".join(lines), max_chars)
-
-
 def _clean_markdown_text(text: str) -> str:
     text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
     text = text.replace("_", "").replace("**", "")
@@ -472,39 +384,11 @@ def _naturalize_sentence(text: str) -> str:
     cleaned = text.strip()
     rewrites = [
         (
-            r"^AppHarbr’s In-App Network Ad Quality Index release, ranking ad networks on safety, user-friendly\.$",
+            r"^AppHarbr.*ranking ad networks on safety, user-friendly.*$",
             "AppHarbr launched a new ranking that shows which ad networks are safer and more user-friendly.",
         ),
         (
-            r"^AppHarbr’s In-App Network Ad Quality Index release, ranking ad networks on safety, user-friendly$",
-            "AppHarbr launched a new ranking that shows which ad networks are safer and more user-friendly.",
-        ),
-        (
-            r"^AppHarbr released its In-App Network Ad Quality Index, ranking ad networks on safety, user-friendly\.$",
-            "AppHarbr launched a new ranking that shows which ad networks are safer and more user-friendly.",
-        ),
-        (
-            r"^AppHarbr released its In-App Network Ad Quality Index, ranking ad networks on safety, user-friendly$",
-            "AppHarbr launched a new ranking that shows which ad networks are safer and more user-friendly.",
-        ),
-        (
-            r"^AppHarbr released its In-App Network Ad Quality Index, ranking ad networks on safety, user-friendly, and .*\.$",
-            "AppHarbr launched a new ranking that shows which ad networks are safer and more user-friendly.",
-        ),
-        (
-            r"^AppHarbr released its In-App Network Ad Quality Index, ranking ad networks on safety, user-friendly, and .*",
-            "AppHarbr launched a new ranking that shows which ad networks are safer and more user-friendly.",
-        ),
-        (
-            r"^Introduces first benchmark for in-app ad quality\.$",
-            "It gives advertisers and app teams a clearer way to compare ad quality inside mobile apps.",
-        ),
-        (
-            r"^Introduces first benchmark for in-app ad quality$",
-            "It gives advertisers and app teams a clearer way to compare ad quality inside mobile apps.",
-        ),
-        (
-            r"^Introduces first benchmark for in-app ad quality,.*",
+            r"^Introduces first benchmark for in-app ad quality.*$",
             "It gives advertisers and app teams a clearer way to compare ad quality inside mobile apps.",
         ),
     ]
@@ -520,5 +404,7 @@ def _truncate(text: str, max_chars: int) -> str:
     return text[: max_chars - 80].rstrip() + "\n\n[Truncated. Open the local Markdown report for the full brief.]"
 
 
-def _bool(value: str | None) -> bool:
+def _bool(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
