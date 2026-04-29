@@ -12,8 +12,8 @@ on:
           - daily
           - weekly
   schedule:
-    - cron: '7 2 * * *'
-    - cron: '7 10 * * 5'
+    - cron: '7 6 * * *'
+    - cron: '0 14 * * 5'
 
 jobs:
   market-brief:
@@ -41,11 +41,11 @@ jobs:
           pip install -e ".[dev]" || pip install -e .
 
       - name: Run daily brief
-        if: ${{ github.event_name == 'schedule' && github.event.schedule == '7 2 * * *' || github.event_name == 'workflow_dispatch' && inputs.mode == 'daily' }}
+        if: ${{ github.event_name == 'schedule' && github.event.schedule == '7 6 * * *' || github.event_name == 'workflow_dispatch' && inputs.mode == 'daily' }}
         run: bidmatrix-monitor
 
       - name: Run weekly brief
-        if: ${{ github.event_name == 'schedule' && github.event.schedule == '7 10 * * 5' || github.event_name == 'workflow_dispatch' && inputs.mode == 'weekly' }}
+        if: ${{ github.event_name == 'schedule' && github.event.schedule == '0 14 * * 5' || github.event_name == 'workflow_dispatch' && inputs.mode == 'weekly' }}
         run: bidmatrix-monitor --weekly
 
       - name: Upload reports artifact
