@@ -51,8 +51,9 @@ def build_report(items: list[NewsItem], config: MonitorConfig) -> MonitorReport:
         and item.freshness_tier == "background_context"
         and item.final_score >= thresholds["background_min_score"]
     ][:5]
-    daily_signals = _daily_signals(core_curated, target=3)
-    adjacent_watchlist = _daily_signals(adjacent_curated, target=2) if not daily_signals else []
+    top_candidates = [item for item in core_curated if item.confidence in {'high', 'medium'}]
+    daily_signals = _daily_signals(top_candidates, target=3)
+    adjacent_watchlist = _recent_signals(adjacent_curated, target=2) if not daily_signals else []
     report_items = _unique_items(curated + background_items)
     diagnostics = _diagnostics(items, deduped, curated, background_items, thresholds)
     diagnostics["kept_core_signals"] = len(core_curated)
@@ -99,11 +100,15 @@ def build_report(items: list[NewsItem], config: MonitorConfig) -> MonitorReport:
     )
 
 def _daily_signals(curated: list[NewsItem], target: int) -> list[NewsItem]:
+    return _recent_signals(curated, target)
+
+
+def _recent_signals(items: list[NewsItem], target: int) -> list[NewsItem]:
     selected: list[NewsItem] = []
     buckets = [
-        _sort_daily_bucket([item for item in curated if item.freshness_tier == "new_last_24h"]),
-        _sort_daily_bucket([item for item in curated if _is_last_72h(item) and item.freshness_tier != "new_last_24h"]),
-        _sort_daily_bucket([item for item in curated if item.freshness_tier == "new_last_7d" and not _is_last_72h(item)]),
+        _sort_daily_bucket([item for item in items if item.freshness_tier == 'new_last_24h']),
+        _sort_daily_bucket([item for item in items if _is_last_72h(item) and item.freshness_tier != 'new_last_24h']),
+        _sort_daily_bucket([item for item in items if item.freshness_tier == 'new_last_7d' and not _is_last_72h(item)]),
     ]
     for bucket in buckets:
         for item in bucket:
@@ -112,7 +117,6 @@ def _daily_signals(curated: list[NewsItem], target: int) -> list[NewsItem]:
             if len(selected) >= target:
                 return selected
     return selected
-
 
 def _sort_daily_bucket(items: list[NewsItem]) -> list[NewsItem]:
     return sorted(
@@ -127,20 +131,15 @@ def _sort_daily_bucket(items: list[NewsItem]) -> list[NewsItem]:
 
 
 def _daily_intro(curated: list[NewsItem], daily_signals: list[NewsItem], adjacent_watchlist: list[NewsItem]) -> str:
-    fresh_today = [item for item in curated if item.freshness_tier == "new_last_24h" and item.freshness_confidence >= 4]
-    if fresh_today:
-        return f"{len(fresh_today)} high-confidence core signal(s) look fresh today. This brief leads with the clearest developments and uses nearby context only where it adds meaning."
-    fresh_72h = [item for item in curated if _is_last_72h(item)]
-    if fresh_72h:
-        return "No fresh same-day high-confidence signals. Today's brief uses the best relevant core signals from the last 72 hours, with older context only where it sharpens the read."
-    fresh_week = [item for item in curated if item.freshness_tier == "new_last_7d"]
-    if fresh_week:
-        return "No fresh same-day high-confidence signals. Today's brief uses the best relevant core signals from the last 7 days and a small amount of strategic context."
+    count = len(daily_signals)
+    if count:
+        noun = 'signal' if count == 1 else 'signals'
+        return f'Found {count} core {noun} worth attention today.'
     if adjacent_watchlist:
-        return "No core BidMatrix-relevant signals found today. Here are adjacent watchlist items worth tracking."
-    if not daily_signals:
-        return "No fresh high-confidence signals found today. Here are useful background items worth tracking."
-    return "Daily brief skipped: not enough relevant market signals found today."
+        return 'No core BidMatrix-relevant signals found today. Here are adjacent watchlist items worth tracking.'
+    if curated:
+        return "No fresh same-day high-confidence signals. Today's brief uses the best relevant core signals from the last 72 hours, with older context only where it sharpens the read."
+    return 'No fresh high-confidence signals found today. Here are useful background items worth tracking.'
 
 def _sensitivity_thresholds(config: MonitorConfig) -> dict[str, int | str]:
     base_min_score = config.outputs.min_relevance_score
@@ -687,67 +686,68 @@ def _relevance_tier(item: NewsItem, config: MonitorConfig | None) -> str:
 
 
 def _linkedin_angle(item: NewsItem) -> str:
-    company = _lead_entity(item)
-    if _has_terms(item, "ias", "total tv", "connected tv", "ctv", "viewability", "device verification"):
-        return f"{company or 'This launch'} is a sharp hook for a post about CTV moving from reach-only media toward transparent, measurable app-growth inventory."
-    if _has_terms(item, "doubleverify", "slopstopper", "ai-generated content", "brand suitability", "youtube"):
-        return f"{company or 'This update'} is a strong angle for a post about why not every impression is equal in the AI-content era."
-    if _has_terms(item, "moloco", "performance ctv", "mmp", "household", "roi", "installs"):
-        return f"{company or 'This launch'} is a strong angle for a post about CTV becoming a user-acquisition channel with measurable outcomes."
-    if _has_terms(item, "overwolf", "gamer grid", "gameplay", "hardware signals", "gamer"):
-        return f"{company or 'This launch'} is a concrete hook for a post about gaming user acquisition moving from broad reach to behavior-based segments."
-    if _has_terms(item, "chartboost direct", "brand demand", "direct deals", "marketplace", "publisher"):
-        return f"{company or 'This move'} is a useful angle for a post about brand budgets moving deeper into curated in-app inventory."
-    if _has_terms(item, "fraud", "invalid traffic", "quality", "brand safety", "viewability"):
-        return f"{company or 'This signal'} is a good hook for a post about traffic quality, safer inventory, and how apps protect revenue."
-    if _has_terms(item, "measurement", "attribution", "skan", "privacy sandbox", "adattributionkit", "mmp"):
-        return f"{company or 'This update'} is a useful way to explain what changed in measurement and what growth teams need to adapt."
-    if _has_terms(item, "daivid", "adin.ai", "creative effectiveness", "creative intelligence", "budget shifts"):
-        return "AI in user acquisition is not just making creatives anymore. It is starting to decide which creatives deserve budget."
-    if _has_terms(item, "ai", "creative", "generative ai", "optimization"):
-        return f"{company or 'This launch'} is a concrete angle for a post about how AI is changing campaign execution, not just creative workflows."
-    if _has_terms(item, "audience", "targeting", "gamer", "gaming"):
-        return f"{company or 'This launch'} is a useful hook for a post about sharper audience targeting and what gaming marketers can actually use."
-    if _has_terms(item, "benchmark", "index", "report"):
-        return f"{company or 'This release'} can anchor a post on what the new benchmark changes for advertisers, not just what the report says."
-    if _has_terms(item, "partnership", "launch", "product update", "released"):
-        return f"{company or 'This move'} works as a short market note on what changed and who benefits across advertisers, platforms, and app publishers."
+    if _has_terms(item, 'omnicom', 'agentic media buying', 'agentic buying', 'media buying agents', 'agentic'):
+        return 'AI agents are entering media buying — but who verifies the quality of what they buy?'
+    if _has_terms(item, 'ias', 'total tv', 'connected tv', 'ctv', 'viewability', 'device verification'):
+        return 'CTV is being sold less on reach alone and more on proof: content-level transparency, verification, and measurable outcomes.'
+    if _has_terms(item, 'doubleverify', 'slopstopper', 'ai-generated content', 'brand suitability', 'youtube'):
+        return 'The AI-content boom is creating a new media-quality problem: not every impression is worth buying.'
+    if _has_terms(item, 'moloco', 'performance ctv', 'mmp', 'household', 'roi', 'installs'):
+        return 'CTV is starting to look like a user-acquisition channel, not just an awareness buy.'
+    if _has_terms(item, 'overwolf', 'gamer grid', 'gameplay', 'hardware signals', 'gamer'):
+        return 'Gaming audience products are getting more behavior-based, but the practical question is whether that signal travels into mobile UA.'
+    if _has_terms(item, 'chartboost direct', 'brand demand', 'direct deals', 'marketplace', 'publisher'):
+        return 'Brand budgets moving into curated in-app inventory could change how premium app supply gets packaged and sold.'
+    if _has_terms(item, 'fraud', 'invalid traffic', 'quality', 'brand safety', 'viewability'):
+        return 'Traffic quality is still a performance story: better filtering protects spend before it disappears into bad inventory.'
+    if _has_terms(item, 'measurement', 'attribution', 'skan', 'privacy sandbox', 'adattributionkit', 'mmp'):
+        return 'Measurement changes only matter when they change real campaign decisions: windows, signals, and what teams can still optimize.'
+    if _has_terms(item, 'daivid', 'adin.ai', 'creative effectiveness', 'creative intelligence', 'budget shifts'):
+        return 'AI in user acquisition is not just making creatives anymore. It is starting to decide which creatives deserve budget.'
+    if _has_terms(item, 'ai', 'creative', 'generative ai', 'optimization'):
+        return 'The next adtech question is not whether AI can speed up execution, but whether it improves media decisions.'
+    if _has_terms(item, 'audience', 'targeting', 'gamer', 'gaming'):
+        return 'Audience quality is getting more behavior-based, which matters only if marketers can turn that signal into better buying decisions.'
+    if _has_terms(item, 'benchmark', 'index', 'report'):
+        return 'A benchmark only matters if it changes how buyers compare quality, performance, or risk.'
+    if _has_terms(item, 'partnership', 'launch', 'product update', 'released'):
+        return 'The useful question is not just what launched, but whether it changes how app marketers buy, measure, or protect performance.'
     text = item.opportunity.strip()
     if text:
         cleaned = _sentence_cleanup(text)
         if cleaned:
             return cleaned
-    return f"{company or 'This signal'} can anchor a short post on what changed this week for mobile growth teams."
-
+    return 'The useful question is what this changes for mobile growth teams today.'
 
 def _bidmatrix_angle(item: NewsItem) -> str:
     company = _lead_entity(item)
-    if _has_terms(item, "ias", "total tv", "connected tv", "ctv", "viewability", "device verification", "invalid traffic"):
-        return "Gives BidMatrix a concrete angle on transparent CTV, verified environments, and performance measurement beyond impressions."
-    if _has_terms(item, "doubleverify", "slopstopper", "ai-generated content", "brand suitability", "youtube"):
-        return "Strengthens BidMatrix positioning around traffic quality in the AI-content era, where low-quality impressions can quietly erode performance."
-    if _has_terms(item, "moloco", "performance ctv", "mmp", "household", "roi", "installs"):
-        return "Supports a BidMatrix point of view that CTV is becoming measurable app-growth media, not just an awareness channel."
-    if _has_terms(item, "overwolf", "gamer grid", "gameplay", "hardware signals", "gamer"):
-        return "Supports BidMatrix positioning around higher-intent audience segments and gaming user acquisition built on deterministic behavior, not broad demographic guesses."
-    if _has_terms(item, "chartboost direct", "brand demand", "direct deals", "marketplace", "publisher"):
-        return "Gives BidMatrix a cleaner angle on curated in-app supply, premium inventory quality, and brand budgets moving deeper into apps."
-    if _has_terms(item, "fraud", "invalid traffic", "quality", "brand safety", "viewability"):
-        return "Strengthens BidMatrix positioning around quality traffic, safer in-app supply, and performance protection."
-    if _has_terms(item, "measurement", "attribution", "skan", "privacy sandbox", "adattributionkit", "mmp"):
-        return "Gives BidMatrix a stronger angle on measurement clarity, attribution resilience, and verified decision-making."
-    if _has_terms(item, "daivid", "adin.ai", "creative effectiveness", "creative intelligence", "budget shifts"):
-        return "Useful for BidMatrix AI-native positioning: AI in performance marketing is moving from content generation to decision support, including creative scoring, budget shifts, and measurable outcomes."
-    if _has_terms(item, "ai", "creative", "generative ai", "optimization"):
-        return "Reinforces BidMatrix's case for AI-native user acquisition that is tied to measurable outcomes, not just automation claims."
-    if _has_terms(item, "programmatic", "dsp", "ssp", "exchange", "brand demand", "inventory"):
-        return "Supports BidMatrix positioning around programmatic growth, stronger in-app inventory quality, and better demand visibility."
-    if _has_terms(item, "retargeting", "ctv", "connected tv"):
-        return "Supports a BidMatrix point of view on growth beyond installs, especially across retargeting and cross-channel inventory."
+    if _has_terms(item, 'omnicom', 'agentic media buying', 'agentic buying', 'media buying agents', 'agentic'):
+        return "Agentic buying is moving from concept to live media operations. This supports BidMatrix's AI-native positioning, but the useful angle is not AI hype — it is how automated buying still needs transparent supply, measurable outcomes, and human QA around performance."
+    if _has_terms(item, 'ias', 'total tv', 'connected tv', 'ctv', 'viewability', 'device verification', 'invalid traffic'):
+        return 'Gives BidMatrix a concrete angle on transparent CTV, verified environments, and performance measurement beyond impressions.'
+    if _has_terms(item, 'doubleverify', 'slopstopper', 'ai-generated content', 'brand suitability', 'youtube'):
+        return 'Strengthens BidMatrix positioning around traffic quality in the AI-content era, where low-quality impressions can quietly erode performance.'
+    if _has_terms(item, 'moloco', 'performance ctv', 'mmp', 'household', 'roi', 'installs'):
+        return 'Supports a BidMatrix point of view that CTV is becoming measurable app-growth media, not just an awareness channel.'
+    if _has_terms(item, 'overwolf', 'gamer grid', 'gameplay', 'hardware signals', 'gamer'):
+        return 'Relevance to BidMatrix is indirect; keep as watchlist only.'
+    if _has_terms(item, 'chartboost direct', 'brand demand', 'direct deals', 'marketplace', 'publisher'):
+        return 'Gives BidMatrix a cleaner angle on curated in-app supply, premium inventory quality, and brand budgets moving deeper into apps.'
+    if _has_terms(item, 'fraud', 'invalid traffic', 'quality', 'brand safety', 'viewability'):
+        return 'Strengthens BidMatrix positioning around quality traffic, safer in-app supply, and performance protection.'
+    if _has_terms(item, 'measurement', 'attribution', 'skan', 'privacy sandbox', 'adattributionkit', 'mmp'):
+        return 'Gives BidMatrix a stronger angle on measurement clarity, attribution resilience, and verified decision-making.'
+    if _has_terms(item, 'daivid', 'adin.ai', 'creative effectiveness', 'creative intelligence', 'budget shifts'):
+        return 'Useful for BidMatrix AI-native positioning: AI in performance marketing is moving from content generation to decision support, including creative scoring, budget shifts, and measurable outcomes.'
+    if _has_terms(item, 'ai', 'creative', 'generative ai', 'optimization'):
+        return "Supports BidMatrix's AI-native positioning when automation is tied to measurable campaign decisions, not just creative speed."
+    if _has_terms(item, 'programmatic', 'dsp', 'ssp', 'exchange', 'brand demand', 'inventory'):
+        return 'Supports BidMatrix positioning around programmatic growth, stronger in-app inventory quality, and better demand visibility.'
+    if _has_terms(item, 'retargeting', 'ctv', 'connected tv'):
+        return 'Supports a BidMatrix point of view on growth beyond installs, especially across retargeting and cross-channel inventory.'
     if company:
-        return f"Creates a timely opening for BidMatrix to comment on how {company} could shift app growth, inventory quality, or measurement expectations."
-    return "Gives BidMatrix a concrete opening to comment on market changes that affect app growth, measurement, and inventory quality."
-
+        return f'Creates a timely opening for BidMatrix to comment on how {company} could shift app growth, inventory quality, or measurement expectations.'
+    return 'Gives BidMatrix a concrete opening to comment on market changes that affect app growth, measurement, and inventory quality.'
 
 def _pr_angle(item: NewsItem) -> str:
     text = _item_text(item)
@@ -1014,17 +1014,18 @@ def _best_content_angle(item: NewsItem) -> str:
 
 
 def _best_concrete_action(item: NewsItem) -> str:
-    if _has_terms(item, "daivid", "adin.ai", "creative effectiveness", "creative intelligence", "budget shifts"):
-        return _sentence_cleanup("Track whether creative intelligence vendors start integrating more directly with media buying, MMPs, or campaign optimization platforms.")
+    if _has_terms(item, 'omnicom', 'agentic media buying', 'agentic buying', 'media buying agents', 'agentic'):
+        return _sentence_cleanup('Use this as a POV hook for AI-native programmatic: automation can speed up buying, but advertisers still need traffic quality, attribution clarity, and performance safeguards.')
+    if _has_terms(item, 'daivid', 'adin.ai', 'creative effectiveness', 'creative intelligence', 'budget shifts'):
+        return _sentence_cleanup('Track whether creative intelligence vendors start integrating more directly with media buying, MMPs, or campaign optimization platforms.')
     if item.concrete_action:
         return _sentence_cleanup(item.concrete_action)
-    if item.signal_type == "privacy_measurement":
-        companies = ", ".join(item.mentioned_companies[:2]) or item.company_or_topic
-        return _sentence_cleanup(f"Check whether {companies} are changing guidance for advertisers, SDK users, or measurement partners.")
-    if item.signal_type == "conference":
-        return _sentence_cleanup("Use this as an agenda signal for what topics, partners, or competitors deserve extra monitoring this quarter.")
+    if item.signal_type == 'privacy_measurement':
+        companies = ', '.join(item.mentioned_companies[:2]) or item.company_or_topic
+        return _sentence_cleanup(f'Check whether {companies} are changing guidance for advertisers, SDK users, or measurement partners.')
+    if item.signal_type == 'conference':
+        return _sentence_cleanup('Use this as an agenda signal for what topics, partners, or competitors deserve extra monitoring this quarter.')
     return _sentence_cleanup(_partner_or_sales_action(item))
-
 
 def _best_watch_next(item: NewsItem) -> str:
     if _has_terms(item, "daivid", "adin.ai", "creative effectiveness", "creative intelligence", "budget shifts"):

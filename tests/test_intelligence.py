@@ -519,3 +519,127 @@ Today's brief uses the best relevant signals from the last 72 hours.
     assert "built on." not in message
     assert "based on." not in message
     assert "using." not in message
+
+
+def test_daily_telegram_title_is_exact_bidmatrix() -> None:
+    markdown = """# BidMatrix Daily Brief - 2026-04-29
+
+## Today's Useful Signal
+Found 1 core signal worth attention today.
+
+## Top Signal
+### 1. Test Signal — Measurement update
+- What happened: Test.
+- Why it matters: Test.
+- BidMatrix angle: Test.
+- Content angle: Test.
+- Action: Test.
+- Source: [Example](https://example.com/test) - example.com - confidence: high
+"""
+    message = _telegram_message('BidMatrix Daily Market Brief - 2026-04-29', markdown, 'daily')
+    assert message.startswith('<b>BidMatrix Daily Brief — 2026-04-29</b>')
+
+
+def test_intro_count_matches_rendered_top_signal_count() -> None:
+    markdown = """# BidMatrix Daily Brief - 2026-04-29
+
+## Today's Useful Signals
+Found 2 core signals worth attention today.
+
+## Top Signals
+### 1. Signal One — A
+- What happened: A.
+- Why it matters: A.
+- BidMatrix angle: A.
+- Content angle: A.
+- Action: A.
+- Source: [One](https://example.com/1) - example.com - confidence: high
+### 2. Signal Two — B
+- What happened: B.
+- Why it matters: B.
+- BidMatrix angle: B.
+- Content angle: B.
+- Action: B.
+- Source: [Two](https://example.com/2) - example.com - confidence: medium
+"""
+    message = _telegram_message('BidMatrix Daily Market Brief - 2026-04-29', markdown, 'daily')
+    assert 'Found 2 core signals worth attention today.' in message
+    assert '<b>Top signals</b>' in message
+
+
+def test_low_confidence_items_are_not_rendered_as_top_signals() -> None:
+    markdown = """# BidMatrix Daily Brief - 2026-04-29
+
+## Today's Useful Signals
+Found 2 core signals worth attention today.
+
+## Top Signals
+### 1. Strong Signal — A
+- What happened: A.
+- Why it matters: A.
+- BidMatrix angle: A.
+- Content angle: A.
+- Action: A.
+- Source: [One](https://example.com/1) - example.com - confidence: high
+### 2. Weak Signal — B
+- What happened: B.
+- Why it matters: B.
+- BidMatrix angle: B.
+- Content angle: B.
+- Action: B.
+- Source: [Two](https://example.com/2) - example.com - confidence: low
+"""
+    message = _telegram_message('BidMatrix Daily Market Brief - 2026-04-29', markdown, 'daily')
+    assert 'Strong Signal' in message
+    assert 'Weak Signal' not in message
+    assert 'Found 1 core signal worth attention today.' in message
+
+
+def test_empty_strategic_context_is_not_rendered_in_telegram() -> None:
+    markdown = """# BidMatrix Daily Brief - 2026-04-29
+
+## Today's Useful Signal
+Found 1 core signal worth attention today.
+
+## Top Signal
+### 1. Test Signal — A
+- What happened: A.
+- Why it matters: A.
+- BidMatrix angle: A.
+- Content angle: A.
+- Action: A.
+- Source: [One](https://example.com/1) - example.com - confidence: high
+
+## Strategic Context
+- Background context, not a fresh daily signal.
+"""
+    message = _telegram_message('BidMatrix Daily Market Brief - 2026-04-29', markdown, 'daily')
+    assert '<b>Strategic context</b>' not in message
+
+
+def test_omnicom_agentic_buying_gets_specific_angles() -> None:
+    config = MonitorConfig(
+        brand_name='BidMatrix',
+        brand_description='Adtech',
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity='broad'),
+        topics=(Topic(id='ai', label='AI', query='ai'),),
+        sources=SourceConfig(high_signal_domains=('example.com',), fresh_priority_domains=('example.com',)),
+    )
+    item = NewsItem(
+        topic_id='ai',
+        topic_label='AI',
+        title='Omnicom rolls out agentic media buying workflow',
+        url='https://example.com/2026/04/29/omnicom-agentic-buying',
+        published_date=date.today().isoformat(),
+        summary='Omnicom rolled out an agentic media buying workflow for live campaign operations and programmatic execution.',
+        why_it_matters='It moves AI buying from concept to live media operations.',
+        mentioned_companies=['Omnicom'],
+        relevance_score=5,
+    )
+    report = build_report([item], config)
+    signal = report.daily_signals[0]
+    assert 'AI-native positioning' in signal.why_it_matters_for_bidmatrix or 'Agentic buying is moving from concept to live media operations' in signal.why_it_matters_for_bidmatrix
+    assert 'traffic quality' not in signal.why_it_matters_for_bidmatrix.lower() or 'automated buying still needs transparent supply' in signal.why_it_matters_for_bidmatrix.lower()
+    assert signal.content_angle == 'AI agents are entering media buying — but who verifies the quality of what they buy?'
+    assert 'is a good hook for a post about' not in signal.content_angle
