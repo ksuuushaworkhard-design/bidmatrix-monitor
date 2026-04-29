@@ -1,0 +1,39 @@
+{
+  "partners": [
+    "Adjust",
+    "AppsFlyer",
+    "Singular",
+    "Branch",
+    "Kochava",
+    "Airbridge",
+    "Tenjin",
+    "Sensor Tower",
+    "data.ai",
+    "SplitMetrics",
+    "Storemaven",
+    "RevenueCat",
+    "Amplitude",
+    "Mixpanel",
+    "mParticle",
+    "Snowflake"
+  ],
+  "watchlist": [
+    "Apple",
+    "Apple Search Ads",
+    "Google",
+    "Google Ads",
+    "Google Privacy Sandbox",
+    "Meta",
+    "TikTok",
+    "Snap",
+    "Reddit Ads",
+    "Amazon Ads",
+    "The Trade Desk",
+    "IAB Tech Lab",
+    "MRC"
+  ],
+  "notes": {
+    "partners": "Companies BidMatrix may reference in partner, integration, measurement, analytics, app growth, or market intelligence conversations.",
+    "watchlist": "Platform, standards, and major media owners whose privacy, measurement, or ad product updates can change advertiser behavior."
+  }
+}

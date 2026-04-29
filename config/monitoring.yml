@@ -1,0 +1,46 @@
+brand:
+  name: BidMatrix
+  description: B2B mobile ad tech company focused on mobile marketing, app growth, and market intelligence.
+
+search:
+  type: deep
+  category: news
+  num_results_per_topic: 8
+  max_age_hours: 24
+  highlights:
+    max_characters: 4000
+
+topics:
+  - id: mobile-marketing
+    label: Mobile marketing and app growth
+    query: mobile marketing app growth user acquisition retention monetization latest news
+    priority_keywords: [mobile marketing, app growth, user acquisition, retention, monetization]
+  - id: adtech
+    label: Mobile adtech and programmatic
+    query: mobile adtech programmatic advertising in-app bidding DSP SSP exchange latest news
+    priority_keywords: [adtech, programmatic, in-app, DSP, SSP, exchange]
+  - id: attribution-measurement
+    label: Attribution and measurement
+    query: mobile attribution measurement SKAN privacy sandbox incrementality MMP latest news
+    priority_keywords: [attribution, measurement, SKAN, privacy sandbox, incrementality, MMP]
+  - id: fraud-brand-safety
+    label: Fraud, quality, and brand safety
+    query: mobile ad fraud invalid traffic brand safety viewability app install fraud latest news
+    priority_keywords: [ad fraud, invalid traffic, brand safety, viewability, fraud]
+  - id: ai-marketing
+    label: AI for marketing and creative strategy
+    query: AI marketing creative optimization generative AI advertising mobile campaigns latest news
+    priority_keywords: [AI marketing, generative AI, creative optimization, advertising]
+  - id: competitors-partners
+    label: Partners and competitors
+    query: AppLovin Moloco Liftoff Adjust AppsFlyer Singular Branch mobile adtech news
+    priority_keywords: [AppLovin, Moloco, Liftoff, Adjust, AppsFlyer, Singular, Branch]
+  - id: conferences
+    label: Conferences and industry events
+    query: mobile marketing adtech conference MAU MWC DMEXCO App Promotion Summit announcements
+    priority_keywords: [conference, MAU, MWC, DMEXCO, App Promotion Summit, event]
+
+outputs:
+  report_dir: reports
+  max_items_in_digest: 20
+  recurring_trend_min_mentions: 2

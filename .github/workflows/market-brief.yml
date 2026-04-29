@@ -1,0 +1,65 @@
+name: BidMatrix Market Brief
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Run mode
+        required: true
+        default: daily
+        type: choice
+        options:
+          - daily
+          - weekly
+  schedule:
+    - cron: '7 2 * * *'
+    - cron: '7 10 * * 5'
+
+jobs:
+  market-brief:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      BIDMATRIX_DELIVERY_ENABLED: 'true'
+      BIDMATRIX_DELIVERY_CHANNEL: telegram
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]" || pip install -e .
+
+      - name: Run daily brief
+        if: ${{ github.event_name == 'schedule' && github.event.schedule == '7 2 * * *' || github.event_name == 'workflow_dispatch' && inputs.mode == 'daily' }}
+        run: bidmatrix-monitor
+
+      - name: Run weekly brief
+        if: ${{ github.event_name == 'schedule' && github.event.schedule == '7 10 * * 5' || github.event_name == 'workflow_dispatch' && inputs.mode == 'weekly' }}
+        run: bidmatrix-monitor --weekly
+
+      - name: Upload reports artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-${{ github.run_id }}
+          path: reports/
+          if-no-files-found: ignore
+
+      - name: Upload logs artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ github.run_id }}
+          path: logs/
+          if-no-files-found: ignore

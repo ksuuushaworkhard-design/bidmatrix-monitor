@@ -1,0 +1,62 @@
+[
+  {
+    "id": "mobile-marketing",
+    "label": "Mobile marketing announcements",
+    "query": "mobile marketing user acquisition app advertisers newsroom press release product launch launch announcement partnership announcement latest updates last 7 days",
+    "priority_keywords": ["mobile marketing", "user acquisition", "UA", "newsroom", "press release", "product launch", "launch announcement", "partnership announcement", "latest updates", "last 7 days"]
+  },
+  {
+    "id": "mobile-adtech-programmatic",
+    "label": "Mobile adtech and programmatic announcements",
+    "query": "mobile adtech programmatic advertising DSP SSP ad exchange in-app bidding newsroom press release product launch partnership announcement acquisition funding latest updates last 7 days",
+    "priority_keywords": ["mobile adtech", "programmatic", "DSP", "SSP", "in-app bidding", "newsroom", "press release", "product launch", "partnership announcement", "acquisition", "funding", "last 7 days"]
+  },
+  {
+    "id": "app-growth",
+    "label": "App growth announcements",
+    "query": "app growth mobile app user acquisition monetization newsroom press release product launch partnership announcement benchmark release latest updates last 7 days",
+    "priority_keywords": ["app growth", "user acquisition", "monetization", "newsroom", "press release", "product launch", "partnership announcement", "benchmark release", "latest updates", "last 7 days"]
+  },
+  {
+    "id": "attribution-measurement",
+    "label": "Attribution and measurement updates",
+    "query": "mobile attribution measurement MMP SKAN AdAttributionKit privacy sandbox release notes changelog product update product launch newsroom latest updates last 7 days",
+    "priority_keywords": ["attribution", "measurement", "MMP", "SKAN", "AdAttributionKit", "privacy sandbox", "release notes", "changelog", "product update", "product launch", "last 7 days"]
+  },
+  {
+    "id": "fraud-quality",
+    "label": "Fraud and traffic quality announcements",
+    "query": "mobile ad fraud invalid traffic IVT brand safety viewability traffic quality newsroom press release report launch product update latest updates last 7 days",
+    "priority_keywords": ["ad fraud", "invalid traffic", "IVT", "brand safety", "viewability", "traffic quality", "newsroom", "press release", "report launch", "product update", "last 7 days"]
+  },
+  {
+    "id": "ai-marketing-creative",
+    "label": "AI creative and marketing product launches",
+    "query": "AI marketing creative optimization creative analytics mobile advertising product launch launch announcement newsroom press release release notes partnership announcement latest updates last 7 days",
+    "priority_keywords": ["AI marketing", "creative optimization", "creative analytics", "product launch", "launch announcement", "newsroom", "press release", "release notes", "partnership announcement", "last 7 days"]
+  },
+  {
+    "id": "mmp-product-updates",
+    "label": "MMP product updates",
+    "query": "Adjust AppsFlyer Singular Branch Kochava Airbridge Tenjin mobile measurement partner newsroom release notes changelog product update product launch latest updates last 7 days",
+    "priority_keywords": ["MMP", "Adjust", "AppsFlyer", "Singular", "Branch", "Kochava", "Airbridge", "Tenjin", "newsroom", "release notes", "changelog", "product update", "product launch", "last 7 days"]
+  },
+  {
+    "id": "platform-privacy-updates",
+    "label": "Platform privacy and measurement announcements",
+    "query": "Apple Google Privacy Sandbox SKAN AdAttributionKit Meta TikTok mobile advertising measurement newsroom release notes changelog announcement latest updates last 7 days",
+    "priority_keywords": ["Apple", "Google Privacy Sandbox", "SKAN", "AdAttributionKit", "Meta", "TikTok", "measurement", "newsroom", "release notes", "changelog", "announcement", "last 7 days"]
+  },
+  {
+    "id": "partners-competitors",
+    "label": "Partner and competitor announcements",
+    "query": "AppLovin Moloco Liftoff Unity Ads ironSource Mintegral InMobi Digital Turbine LoopMe BidMachine newsroom press release product launch partnership announcement funding acquisition latest updates last 7 days",
+    "priority_keywords": ["AppLovin", "Moloco", "Liftoff", "Unity Ads", "ironSource", "Mintegral", "InMobi", "Digital Turbine", "LoopMe", "BidMachine", "newsroom", "press release", "product launch", "partnership announcement", "funding", "acquisition", "last 7 days"]
+  },
+  {
+    "id": "conferences",
+    "label": "Conference announcements",
+    "query": "mobile marketing adtech conference MAU MWC DMEXCO App Promotion Summit POSSIBLE newsroom press release agenda update speaker announced sponsor announced call for speakers latest updates last 7 days",
+    "priority_keywords": ["conference", "MAU", "MWC", "DMEXCO", "App Promotion Summit", "POSSIBLE", "newsroom", "press release", "agenda update", "speaker announced", "sponsor announced", "call for speakers", "last 7 days"]
+  }
+]

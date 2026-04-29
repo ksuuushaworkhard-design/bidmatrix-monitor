@@ -1,0 +1,36 @@
+{
+  "high_signal_domains": [
+    "adjust.com",
+    "appsflyer.com",
+    "branch.io",
+    "singular.net",
+    "kochava.com",
+    "applovin.com",
+    "moloco.com",
+    "liftoff.io",
+    "unity.com",
+    "businessofapps.com",
+    "mobilemarketingmagazine.com",
+    "exchangewire.com",
+    "adexchanger.com",
+    "digiday.com",
+    "marketingbrew.com",
+    "iab.com",
+    "iabtechlab.com",
+    "appgrowthsummit.com",
+    "apppromotionsummit.com",
+    "dmexco.com",
+    "mwcbarcelona.com",
+    "possibleevent.com"
+  ],
+  "low_value_domains": [
+    "einnews.com",
+    "openpr.com",
+    "issuewire.com",
+    "newsfilecorp.com",
+    "globenewswire.com",
+    "prnewswire.com",
+    "accesswire.com",
+    "abnewswire.com"
+  ]
+}

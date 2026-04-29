@@ -1,0 +1,27 @@
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+reports/
+*.log
+daily-monitor.log
+daily-monitor-error.log
+weekly-monitor.log
+weekly-monitor-error.log
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
+.DS_Store
+node_modules/
+**/node_modules/
+Bidmatrix mascote/
+tmp/
+tmp_extract/
+exports/
+renders/
