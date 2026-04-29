@@ -95,6 +95,7 @@ class NewsItem:
     source_domain: str = ""
     source_url: str = ""
     confidence: str = "medium"
+    relevance_tier: str = "background"
     hot_topics: list[str] = field(default_factory=list)
     mentioned_companies: list[str] = field(default_factory=list)
     signal_type: str = "top_news"
@@ -123,6 +124,7 @@ class MonitorReport:
     trends: list[tuple[str, int]]
     daily_intro: str
     daily_signals: list[NewsItem]
+    adjacent_watchlist: list[NewsItem]
     top_news: list[NewsItem]
     actually_new_today: list[NewsItem]
     fresh_weak_confidence: list[NewsItem]

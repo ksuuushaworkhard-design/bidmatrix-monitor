@@ -320,7 +320,8 @@ def test_render_uses_singular_heading_for_one_daily_signal() -> None:
         title="Alpha launched new product",
         url="https://a.com/2026/04/29/alpha",
         published_date=date.today().isoformat(),
-        summary="Alpha launched new product.",
+        summary="Alpha launched a new attribution product for app marketers.",
+        why_it_matters="It gives app marketers a fresh measurement option.",
         relevance_score=5,
     )
     report = build_report([item], config)
@@ -379,3 +380,142 @@ Today's brief uses the best relevant signals from the last 72 hours.
     assert "Action" in message
     assert "Source" in message
     assert "https://example.com/daivid" in message
+
+
+def test_overwolf_gamer_grid_is_adjacent_not_core() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="broad"),
+        topics=(Topic(id="gaming", label="Gaming", query="gaming"),),
+        sources=SourceConfig(high_signal_domains=("exchangewire.com",), fresh_priority_domains=("exchangewire.com",)),
+    )
+    item = NewsItem(
+        topic_id="gaming",
+        topic_label="Gaming",
+        title="Overwolf Ads launched Gamer Grid",
+        url="https://www.exchangewire.com/blog/2026/04/27/overwolf-ads-launches-gamer-grid/",
+        published_date=date.today().isoformat(),
+        summary="Overwolf Ads launched Gamer Grid using deterministic gameplay behavior and hardware signals for PC gaming audience targeting.",
+        why_it_matters="It sharpens gamer audience segmentation, but remains PC-gaming focused.",
+        mentioned_companies=["Overwolf Ads"],
+        relevance_score=5,
+    )
+    scored = dedupe_items([item], config)[0]
+    assert scored.relevance_tier == "adjacent"
+
+
+def test_telegram_top_signals_only_include_core_items() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="broad"),
+        topics=(Topic(id="mobile", label="Mobile", query="mobile", priority_keywords=("attribution", "mmp", "app")),),
+        sources=SourceConfig(high_signal_domains=("example.com",), fresh_priority_domains=("example.com",)),
+    )
+    core = NewsItem(
+        topic_id="mobile",
+        topic_label="Mobile",
+        title="AppsFlyer adds Privacy Sandbox revenue measurement",
+        url="https://example.com/2026/04/29/appsflyer-privacy-sandbox",
+        published_date=date.today().isoformat(),
+        summary="AppsFlyer added Privacy Sandbox attribution revenue measurement for Android app marketers.",
+        why_it_matters="It affects Android attribution and revenue measurement for app marketers.",
+        mentioned_companies=["AppsFlyer"],
+        relevance_score=5,
+    )
+    adjacent = NewsItem(
+        topic_id="mobile",
+        topic_label="Mobile",
+        title="Overwolf Ads launched Gamer Grid",
+        url="https://example.com/2026/04/29/overwolf-gamer-grid",
+        published_date=date.today().isoformat(),
+        summary="Overwolf Ads launched Gamer Grid using deterministic gameplay behavior and hardware signals for PC gaming audience targeting.",
+        why_it_matters="It sharpens gamer audience segmentation, but remains PC-gaming focused.",
+        mentioned_companies=["Overwolf Ads"],
+        relevance_score=5,
+    )
+    report = build_report([core, adjacent], config)
+    markdown = render_markdown(report)
+    message = _telegram_message("BidMatrix Daily Market Brief - 2026-04-29", markdown, "daily")
+    assert "AppsFlyer" in message
+    assert "Overwolf Ads" not in message
+
+
+def test_no_core_signals_message_includes_adjacent_watchlist() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="broad"),
+        topics=(Topic(id="gaming", label="Gaming", query="gaming"),),
+        sources=SourceConfig(high_signal_domains=("example.com",), fresh_priority_domains=("example.com",)),
+    )
+    adjacent = NewsItem(
+        topic_id="gaming",
+        topic_label="Gaming",
+        title="Overwolf Ads launched Gamer Grid",
+        url="https://example.com/2026/04/29/overwolf-gamer-grid",
+        published_date=date.today().isoformat(),
+        summary="Overwolf Ads launched Gamer Grid using deterministic gameplay behavior and hardware signals for PC gaming audience targeting.",
+        why_it_matters="Behavior-based audience products are becoming more specific, but this remains PC-gaming focused and only indirectly relevant to BidMatrix.",
+        mentioned_companies=["Overwolf Ads"],
+        relevance_score=5,
+    )
+    report = build_report([adjacent], config)
+    markdown = render_markdown(report)
+    message = _telegram_message("BidMatrix Daily Market Brief - 2026-04-29", markdown, "daily")
+    assert "No core BidMatrix-relevant signals found today." in message
+    assert "Adjacent watchlist" in message
+    assert "Overwolf Ads" in message
+    assert "indirect" in message.lower()
+
+
+def test_bidmatrix_angle_is_complete_for_core_signal() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="broad"),
+        topics=(Topic(id="ctv", label="CTV", query="ctv"),),
+        sources=SourceConfig(high_signal_domains=("example.com",), fresh_priority_domains=("example.com",)),
+    )
+    item = NewsItem(
+        topic_id="ctv",
+        topic_label="CTV",
+        title="IAS launched Total TV",
+        url="https://example.com/2026/04/29/ias-total-tv",
+        published_date=date.today().isoformat(),
+        summary="IAS launched Total TV with viewability, invalid traffic, and device verification across premium CTV inventory.",
+        mentioned_companies=["IAS"],
+        relevance_score=5,
+    )
+    report = build_report([item], config)
+    angle = report.daily_signals[0].why_it_matters_for_bidmatrix
+    assert angle.endswith(".")
+    assert "transparent CTV" in angle
+
+
+def test_no_broken_fragment_in_telegram_preview() -> None:
+    markdown = """# BidMatrix Daily Brief - 2026-04-29
+
+## Today's Useful Signal
+Today's brief uses the best relevant signals from the last 72 hours.
+
+## Top Signal
+### 1. Test Signal — Example signal built on
+- What happened: Example signal built on
+- Why it matters: Better attribution decisions based on
+- Market context: Attribution is changing.
+- BidMatrix angle: Supports measurement clarity built on
+- Content angle: Example angle.
+- Action: Track vendor updates using
+- Watch next: Watch next.
+- Source: [Example](https://example.com/test) - example.com
+"""
+    message = _telegram_message("BidMatrix Daily Market Brief - 2026-04-29", markdown, "daily")
+    assert "built on." not in message
+    assert "based on." not in message
+    assert "using." not in message

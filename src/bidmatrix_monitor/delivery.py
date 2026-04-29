@@ -79,25 +79,30 @@ def _telegram_message(subject: str, text: str, report_type: str) -> str:
         )
 
     items = _report_items(text)
+    top_items = [item for item in items if item.get("section") == "top"]
+    adjacent_items = [item for item in items if item.get("section") == "adjacent"]
     intro = _daily_intro_line(text)
     background = _background_trend(text)
     lines = [
         f"<b>BidMatrix Daily Brief — {html.escape(date_label)}</b>",
         "",
         "<b>Today's useful signals</b>",
-        html.escape(_shorten(intro, 180)),
+        html.escape(_shorten(intro, 220)),
     ]
 
-    if items:
-        lines.extend(["", "<b>Top signal</b>" if len(items) == 1 else "<b>Top signals</b>"])
-        for index, item in enumerate(items[:2], start=1):
+    if top_items:
+        lines.extend(["", "<b>Top signal</b>" if len(top_items) == 1 else "<b>Top signals</b>"])
+        for index, item in enumerate(top_items[:2], start=1):
             lines.extend(_telegram_item(item, index))
+    elif adjacent_items:
+        lines.extend(["", "<b>Adjacent watchlist</b>"])
+        for index, item in enumerate(adjacent_items[:2], start=1):
+            lines.extend(_telegram_watchlist_item(item, index))
 
     if background and background != "No useful background context was kept.":
-        lines.extend(["", "<b>Strategic context</b>", html.escape(_executive_line(background, 140))])
+        lines.extend(["", "<b>Strategic context</b>", html.escape(_executive_line(background, 180))])
 
     return _truncate_daily("\n".join(lines), 3200)
-
 
 def _telegram_weekly_message(subject: str, text: str) -> str:
     date_label = _date_from_subject(subject)
@@ -188,14 +193,24 @@ def _subject(report_type: str, markdown_path: Path) -> str:
 def _report_items(text: str) -> list[dict[str, str]]:
     items: list[dict[str, str]] = []
     current: dict[str, str] | None = None
+    section = ""
 
     for line in text.splitlines():
         stripped = line.strip()
+        if stripped in {"## Top Signal", "## Top Signals"}:
+            section = "top"
+            continue
+        if stripped == "## Adjacent Watchlist":
+            section = "adjacent"
+            continue
+        if stripped.startswith("## "):
+            section = ""
         heading = re.match(r"^### (?P<rank>\d+)\.\s+(?P<title>.+)$", stripped)
         if heading:
             if current:
                 items.append(current)
             current = {
+                "section": section,
                 "title": _clean_markdown_text(heading.group("title")),
                 "url": "",
                 "what_happened": "",
@@ -213,10 +228,10 @@ def _report_items(text: str) -> list[dict[str, str]]:
 
         if stripped.startswith("- What happened:"):
             current["what_happened"] = _clean_markdown_text(stripped.removeprefix("- What happened:").strip())
-        elif stripped.startswith("- Why it matters:"):
-            current["why_it_matters"] = _clean_markdown_text(stripped.removeprefix("- Why it matters:").strip())
-        elif stripped.startswith("- BidMatrix angle:"):
-            current["bidmatrix_angle"] = _clean_markdown_text(stripped.removeprefix("- BidMatrix angle:").strip())
+        elif stripped.startswith("- Why it matters:") or stripped.startswith("- Why it may matter:"):
+            current["why_it_matters"] = _clean_markdown_text(stripped.split(":", 1)[1].strip())
+        elif stripped.startswith("- BidMatrix angle:") or stripped.startswith("- BidMatrix use:"):
+            current["bidmatrix_angle"] = _clean_markdown_text(stripped.split(":", 1)[1].strip())
         elif stripped.startswith("- Content angle:"):
             current["content_angle"] = _clean_markdown_text(stripped.removeprefix("- Content angle:").strip())
         elif stripped.startswith("- Action:"):
@@ -232,7 +247,6 @@ def _report_items(text: str) -> list[dict[str, str]]:
     if current:
         items.append(current)
     return items
-
 
 def _weekly_sections(text: str) -> dict[str, list[str]]:
     sections: dict[str, list[str]] = {}
@@ -291,7 +305,7 @@ def _background_trend(text: str) -> str | None:
 
 def _telegram_item(item: dict[str, str], index: int) -> list[str]:
     lines = [
-        f"{index}. {html.escape(_shorten(item['title'], 180))}",
+        f"{index}. {html.escape(_clean_trailing_fragment(_shorten(item['title'], 180)))}",
         "<b>What happened</b>",
         html.escape(_executive_line(item.get("what_happened") or item["title"], 260)),
         "<b>Why it matters</b>",
@@ -316,6 +330,21 @@ def _telegram_item(item: dict[str, str], index: int) -> list[str]:
     return lines
 
 
+def _telegram_watchlist_item(item: dict[str, str], index: int) -> list[str]:
+    lines = [
+        f"{index}. {html.escape(_clean_trailing_fragment(_shorten(item['title'], 180)))}",
+        "<b>Why it may matter</b>",
+        html.escape(_executive_line(item.get("why_it_matters") or item["title"], 220)),
+        "<b>BidMatrix use</b>",
+        html.escape(_executive_line(item.get("bidmatrix_angle") or "Relevance to BidMatrix is indirect; keep as watchlist only.", 200)),
+        "<b>Source</b>",
+        html.escape(_source_name(item)),
+    ]
+    if item.get("url"):
+        lines.append(html.escape(item["url"]))
+    lines.append("")
+    return lines
+
 def _shorten(text: str, max_chars: int) -> str:
     cleaned = " ".join(text.split())
     if len(cleaned) <= max_chars:
@@ -334,8 +363,16 @@ def _source_name(item: dict[str, str]) -> str:
     return item.get("source") or item.get("url") or "source"
 
 def _clean_trailing_fragment(text: str) -> str:
-    cleaned = text.rstrip(',;:- ')
-    cleaned = re.sub(r"\b(and|but|with|for|into|across|against|including|allowing|using)$", "", cleaned, flags=re.IGNORECASE).strip(' ,;:-')
+    cleaned = text.rstrip(',;:.!?- ')
+    trailing_phrases = [
+        'built on', 'based on', 'real-time', 'real time', 'using', 'allowing',
+        'including', 'against', 'across', 'into', 'for', 'with', 'but', 'and'
+    ]
+    lower = cleaned.lower()
+    for phrase in trailing_phrases:
+        if lower.endswith(phrase):
+            cleaned = cleaned[: -len(phrase)].rstrip(' ,;:.!?-')
+            break
     if cleaned and cleaned[-1] not in '.!?':
         cleaned += '.'
     return cleaned
@@ -349,6 +386,7 @@ def _date_from_subject(subject: str) -> str:
 def _executive_line(text: str, max_chars: int) -> str:
     cleaned = _polish_sentence(text)
     cleaned = _naturalize_sentence(cleaned)
+    cleaned = _clean_trailing_fragment(cleaned)
     return _shorten(cleaned, max_chars)
 
 
@@ -375,7 +413,7 @@ def _polish_sentence(text: str) -> str:
     for pattern, replacement in replacements:
         cleaned = re.sub(pattern, replacement, cleaned, flags=re.IGNORECASE)
 
-    cleaned = cleaned.split(";")[0].strip()
+    cleaned = cleaned.replace(";", " — ").strip()
     cleaned = re.sub(r"\bchanges for mobile growth teams\b", "matters for mobile growth teams", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\bbrand-safe supply\b", "safer, higher-quality ad inventory", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\bbrand safety\b", "ad safety", cleaned, flags=re.IGNORECASE)

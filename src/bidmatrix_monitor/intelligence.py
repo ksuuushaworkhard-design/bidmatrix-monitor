@@ -34,22 +34,29 @@ def build_report(items: list[NewsItem], config: MonitorConfig) -> MonitorReport:
     fresh_candidates = [
         item
         for item in deduped
-        if item.source_quality >= thresholds["curated_min_source_quality"]
+        if item.relevance_tier != "ignore"
+        and item.source_quality >= thresholds["curated_min_source_quality"]
         and item.freshness_tier in {"new_last_24h", "new_last_7d"}
     ]
     curated = [
         item for item in fresh_candidates if item.final_score >= thresholds["curated_min_score"]
     ][: config.outputs.max_items_in_digest]
+    core_curated = [item for item in curated if item.relevance_tier == "core"]
+    adjacent_curated = [item for item in curated if item.relevance_tier == "adjacent"]
     background_items = [
         item
         for item in deduped
-        if item.source_quality >= thresholds["background_min_source_quality"]
+        if item.relevance_tier != "ignore"
+        and item.source_quality >= thresholds["background_min_source_quality"]
         and item.freshness_tier == "background_context"
         and item.final_score >= thresholds["background_min_score"]
     ][:5]
-    daily_signals = _daily_signals(curated, target=3)
+    daily_signals = _daily_signals(core_curated, target=3)
+    adjacent_watchlist = _daily_signals(adjacent_curated, target=2) if not daily_signals else []
     report_items = _unique_items(curated + background_items)
     diagnostics = _diagnostics(items, deduped, curated, background_items, thresholds)
+    diagnostics["kept_core_signals"] = len(core_curated)
+    diagnostics["kept_adjacent_signals"] = len(adjacent_curated)
     trends = _trends(report_items, config.outputs.recurring_trend_min_mentions)
     top_news = daily_signals[:8]
     partner_signals = [
@@ -61,34 +68,35 @@ def build_report(items: list[NewsItem], config: MonitorConfig) -> MonitorReport:
     competitor_moves = [
         item for item in curated if _matches_any(item, config.tracking.competitors) or item.signal_type == "competitor_move"
     ][:6]
+    primary_items = core_curated or curated
     return MonitorReport(
         run_date=date.today(),
         diagnostics=diagnostics,
         items=report_items,
         trends=trends,
-        daily_intro=_daily_intro(curated, daily_signals),
+        daily_intro=_daily_intro(core_curated, daily_signals, adjacent_watchlist),
         daily_signals=daily_signals,
+        adjacent_watchlist=adjacent_watchlist,
         top_news=top_news,
         actually_new_today=[
             item
-            for item in curated
+            for item in core_curated
             if item.freshness_tier == "new_last_24h" and item.freshness_confidence >= 4
         ][:5],
         fresh_weak_confidence=[
             item
-            for item in curated
+            for item in core_curated
             if item.freshness_tier in {"new_last_24h", "new_last_7d"}
             and (item.date_quality != "explicit_date" or item.freshness_confidence < 4)
         ][:5],
         background_items=background_items,
-        hot_takes=_hot_takes(curated, trends)[:6],
+        hot_takes=_hot_takes(primary_items, trends)[:6],
         partner_signals=partner_signals,
         competitor_moves=competitor_moves,
-        content_angles_for_linkedin=_content_angles(curated)[:8],
-        pr_hooks=_pr_hooks(curated)[:6],
-        what_changed_today=_what_changed(curated, trends)[:8],
+        content_angles_for_linkedin=_content_angles(primary_items)[:8],
+        pr_hooks=_pr_hooks(primary_items)[:6],
+        what_changed_today=_what_changed(primary_items, trends)[:8],
     )
-
 
 def _daily_signals(curated: list[NewsItem], target: int) -> list[NewsItem]:
     selected: list[NewsItem] = []
@@ -118,20 +126,21 @@ def _sort_daily_bucket(items: list[NewsItem]) -> list[NewsItem]:
     )
 
 
-def _daily_intro(curated: list[NewsItem], daily_signals: list[NewsItem]) -> str:
+def _daily_intro(curated: list[NewsItem], daily_signals: list[NewsItem], adjacent_watchlist: list[NewsItem]) -> str:
     fresh_today = [item for item in curated if item.freshness_tier == "new_last_24h" and item.freshness_confidence >= 4]
     if fresh_today:
-        return f"{len(fresh_today)} high-confidence signal(s) look fresh today. This brief leads with the clearest developments and uses nearby context only where it adds meaning."
+        return f"{len(fresh_today)} high-confidence core signal(s) look fresh today. This brief leads with the clearest developments and uses nearby context only where it adds meaning."
     fresh_72h = [item for item in curated if _is_last_72h(item)]
     if fresh_72h:
-        return "No fresh same-day high-confidence signals. Today's brief uses the best relevant signals from the last 72 hours, with older context only where it sharpens the read."
+        return "No fresh same-day high-confidence signals. Today's brief uses the best relevant core signals from the last 72 hours, with older context only where it sharpens the read."
     fresh_week = [item for item in curated if item.freshness_tier == "new_last_7d"]
     if fresh_week:
-        return "No fresh same-day high-confidence signals. Today's brief uses the best relevant signals from the last 7 days and a small amount of strategic context."
+        return "No fresh same-day high-confidence signals. Today's brief uses the best relevant core signals from the last 7 days and a small amount of strategic context."
+    if adjacent_watchlist:
+        return "No core BidMatrix-relevant signals found today. Here are adjacent watchlist items worth tracking."
     if not daily_signals:
         return "No fresh high-confidence signals found today. Here are useful background items worth tracking."
     return "Daily brief skipped: not enough relevant market signals found today."
-
 
 def _sensitivity_thresholds(config: MonitorConfig) -> dict[str, int | str]:
     base_min_score = config.outputs.min_relevance_score
@@ -221,6 +230,7 @@ def _score_item(item: NewsItem, config: MonitorConfig | None) -> NewsItem:
     source_quality = _source_quality(item, config)
     freshness_tier = _freshness_tier(item)
     originality_score = _originality_score(item)
+    _enrich_signal(item, config)
     relevance = _relevance_score(item, config)
     entity_bonus = 0
 
@@ -266,7 +276,6 @@ def _score_item(item: NewsItem, config: MonitorConfig | None) -> NewsItem:
     if item.monitoring_layer == "strategic_background" and item.freshness_tier in {"new_last_24h", "new_last_7d"}:
         score -= 1
 
-    _enrich_signal(item)
     item.linkedin_post_angle = item.content_angle or _linkedin_angle(item)
     item.bidmatrix_angle = item.why_it_matters_for_bidmatrix or _bidmatrix_angle(item)
     item.pr_angle = _pr_angle(item)
@@ -279,12 +288,13 @@ def _score_item(item: NewsItem, config: MonitorConfig | None) -> NewsItem:
     return item
 
 
-def _enrich_signal(item: NewsItem) -> None:
+def _enrich_signal(item: NewsItem, config: MonitorConfig | None = None) -> None:
     item.signal_type = _normalized_signal_type(item)
     item.company_or_topic = _primary_company_or_topic(item) or item.company_or_topic or _lead_entity(item) or item.topic_label
     item.source_title = item.source_title or item.title
     item.source_domain = item.source_domain or urlparse(item.url).netloc.lower().removeprefix("www.")
     item.source_url = item.source_url or item.url
+    item.relevance_tier = _relevance_tier(item, config)
     item.what_happened = _best_what_happened(item)
     item.why_now = _best_why_now(item)
     item.market_context = _best_market_context(item)
@@ -619,7 +629,61 @@ def _relevance_score(item: NewsItem, config: MonitorConfig | None) -> int:
         score += 1
     if any(name.lower() in text for name in config.tracking.partners + config.tracking.competitors):
         score += 1
-    return min(3, score)
+    if item.relevance_tier == "core":
+        score += 1
+    elif item.relevance_tier == "adjacent":
+        score -= 1
+    elif item.relevance_tier == "ignore":
+        score -= 3
+    return min(3, max(0, score))
+
+def _relevance_tier(item: NewsItem, config: MonitorConfig | None) -> str:
+    text = " ".join(
+        [
+            _item_text(item),
+            item.what_happened or "",
+            item.why_now or "",
+            item.market_context or "",
+            item.summary or "",
+            item.company_or_topic or "",
+        ]
+    ).lower()
+    core_terms = (
+        "user acquisition", "app growth", "performance marketing", "mobile marketing", "in-app",
+        "app advertisers", "app marketers", "app inventory", "app monetization", "programmatic",
+        "mmp", "attribution", "skan", "privacy sandbox", "adattributionkit", "measurement",
+        "incrementality", "fraud", "invalid traffic", "ivt", "traffic quality", "verified",
+        "viewability", "brand safety", "connected tv", "ctv", "performance ctv", "installs",
+        "roi", "roas", "creative intelligence", "creative effectiveness", "budget shifts",
+        "campaign optimization", "media optimization", "retargeting", "chartboost direct",
+        "direct deals", "brand demand", "appsflyer", "adjust", "singular", "airbridge",
+        "kochava", "branch", "moloco", "liftoff", "applovin", "ironsource", "unity",
+        "mintegral", "tenjin", "apptweak", "clevertap", "braze"
+    )
+    adjacent_terms = (
+        "pc gaming", "gameplay", "hardware signals", "gamer grid", "gamer", "gaming audience",
+        "publisher yield", "broad brand advertising", "generic agency", "media news"
+    )
+    ignore_terms = (
+        "esports", "community event", "community update", "tournament", "gaming community", "creator drop"
+    )
+    if any(term in text for term in ignore_terms):
+        return "ignore"
+    if any(term in text for term in core_terms):
+        if "ctv" in text and not any(term in text for term in ("app", "apps", "install", "installs", "mmp", "roi", "roas", "performance", "viewability", "invalid traffic", "device verification", "measurement")):
+            return "adjacent"
+        return "core"
+    if config and any(name.lower() in text for name in config.tracking.partners + config.tracking.competitors):
+        return "core"
+    if any(term in text for term in adjacent_terms):
+        return "adjacent"
+    if any(term in text for term in ("creative", "ai", "brand", "publisher", "inventory")):
+        if any(term in text for term in ("mobile", "app", "campaign optimization", "media optimization", "measurement", "attribution")):
+            return "core"
+        return "adjacent"
+    if any(term in text for term in ("report", "benchmark", "index", "study", "conference", "summit")):
+        return "background"
+    return "background"
 
 
 def _linkedin_angle(item: NewsItem) -> str:
@@ -768,7 +832,18 @@ def _lead_entity(item: NewsItem) -> str:
 
 def _has_terms(item: NewsItem, *terms: str) -> bool:
     text = _item_text(item)
-    return any(term in text for term in terms)
+    for term in terms:
+        token = term.strip().lower()
+        if not token:
+            continue
+        pattern = re.escape(token)
+        if token[0].isalnum():
+            pattern = r"\b" + pattern
+        if token[-1].isalnum():
+            pattern += r"\b"
+        if re.search(pattern, text):
+            return True
+    return False
 
 def _primary_company_or_topic(item: NewsItem) -> str:
     texts = [item.what_happened, item.summary, item.title]
@@ -829,12 +904,12 @@ def _sentence_cleanup(text: str) -> str:
     for old, new in replacements.items():
         cleaned = cleaned.replace(old, new)
     cleaned = cleaned.strip()
+    cleaned = re.sub(r"(and|but|with|for|into|across|against|including|allowing|using|built on|based on|real-time|real time)$", "", cleaned, flags=re.IGNORECASE).strip(" ,;:-")
     if not cleaned:
         return ""
     if cleaned[-1] not in ".!?":
         cleaned += "."
     return cleaned[0].upper() + cleaned[1:]
-
 
 def _unique_items(items: list[NewsItem]) -> list[NewsItem]:
     seen: set[str] = set()
@@ -922,12 +997,13 @@ def _best_market_context(item: NewsItem) -> str:
 
 
 def _best_bidmatrix_implication(item: NewsItem) -> str:
+    if item.relevance_tier == "adjacent":
+        return _sentence_cleanup("Relevance to BidMatrix is indirect; keep as watchlist only.")
     if _has_terms(item, "daivid", "adin.ai", "creative effectiveness", "creative intelligence", "budget shifts"):
         return _sentence_cleanup("Useful for BidMatrix AI-native positioning: AI in performance marketing is moving from content generation to decision support, including creative scoring, budget shifts, and measurable outcomes.")
     if item.why_it_matters_for_bidmatrix:
         return _sentence_cleanup(item.why_it_matters_for_bidmatrix)
     return _sentence_cleanup(_bidmatrix_angle(item))
-
 
 def _best_content_angle(item: NewsItem) -> str:
     if _has_terms(item, "daivid", "adin.ai", "creative effectiveness", "creative intelligence", "budget shifts"):

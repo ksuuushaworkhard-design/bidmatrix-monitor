@@ -33,6 +33,9 @@ def render_markdown(report: MonitorReport) -> str:
     if report.daily_signals:
         lines.extend(["", "## Top Signal" if len(report.daily_signals) == 1 else "## Top Signals"])
         lines.extend(_daily_signal_cards(report.daily_signals))
+    elif report.adjacent_watchlist:
+        lines.extend(["", "## Adjacent Watchlist"])
+        lines.extend(_adjacent_watchlist_cards(report.adjacent_watchlist))
     lines.extend([
         "",
         "## Strategic Context",
@@ -137,12 +140,29 @@ def _daily_signal_cards(items: list[NewsItem]) -> list[str]:
                 f"- Content angle: {_sentence(item.content_angle or item.linkedin_post_angle)}",
                 f"- Action: {_sentence(item.concrete_action or item.partner_or_sales_action)}",
                 f"- Watch next: {_sentence(item.watch_next)}",
-                f"- Source: [{item.source_title or item.title}]({item.source_url or item.url}) - {_source_label(item)} - confidence: {item.confidence}",
+                f"- Source: [{item.source_title or item.title}]({item.source_url or item.url}) - {_source_label(item)} - Date: {item.published_date or 'unknown'} - confidence: {item.confidence}",
                 "",
             ]
         )
     return lines[:-1] if lines else ["- No usable signal cards were generated."]
 
+
+
+def _adjacent_watchlist_cards(items: list[NewsItem]) -> list[str]:
+    lines: list[str] = []
+    for index, item in enumerate(items, start=1):
+        entity = _lead_entity(item)
+        title = _event_line(item, entity)
+        lines.extend(
+            [
+                f"### {index}. {title}",
+                f"- Why it may matter: {_sentence(item.why_now or item.market_context or item.why_it_matters)}",
+                f"- BidMatrix use: {_sentence(item.why_it_matters_for_bidmatrix or item.bidmatrix_angle or 'Relevance to BidMatrix is indirect; keep as watchlist only.')}",
+                f"- Source: [{item.source_title or item.title}]({item.source_url or item.url}) - {_source_label(item)} - Date: {item.published_date or 'unknown'}",
+                "",
+            ]
+        )
+    return lines[:-1] if lines else ["- No adjacent watchlist items were kept."]
 
 def _background_context(report: MonitorReport) -> list[str]:
     values: list[str] = []
@@ -378,6 +398,7 @@ def _report_to_dict(report: MonitorReport) -> dict:
         "trends": [{"topic": trend, "mentions": count} for trend, count in report.trends],
         "daily_intro": report.daily_intro,
         "daily_signals": [_item_to_dict(item) for item in report.daily_signals],
+        "adjacent_watchlist": [_item_to_dict(item) for item in report.adjacent_watchlist],
         "top_news": [_item_to_dict(item) for item in report.top_news],
         "actually_new_today": [_item_to_dict(item) for item in report.actually_new_today],
         "fresh_weak_confidence": [_item_to_dict(item) for item in report.fresh_weak_confidence],
@@ -397,6 +418,7 @@ def _curated_report_to_dict(report: MonitorReport) -> dict:
         "diagnostics": report.diagnostics,
         "daily_intro": report.daily_intro,
         "daily_signals": [_curated_item(item) for item in report.daily_signals],
+        "adjacent_watchlist": [_curated_item(item) for item in report.adjacent_watchlist],
         "top_news": [_curated_item(item) for item in report.top_news],
         "actually_new_today": [_curated_item(item) for item in report.actually_new_today],
         "fresh_weak_confidence": [_curated_item(item) for item in report.fresh_weak_confidence],
@@ -438,6 +460,7 @@ def _item_to_dict(item: NewsItem) -> dict:
         "source_domain": item.source_domain,
         "source_url": item.source_url,
         "confidence": item.confidence,
+        "relevance_tier": item.relevance_tier,
         "hot_topics": item.hot_topics,
         "mentioned_companies": item.mentioned_companies,
         "signal_type": item.signal_type,
@@ -488,6 +511,7 @@ def _curated_item(item: NewsItem) -> dict:
         "source_domain": item.source_domain,
         "source_url": item.source_url,
         "confidence": item.confidence,
+        "relevance_tier": item.relevance_tier,
         "hot_topics": item.hot_topics,
         "mentioned_companies": item.mentioned_companies,
         "score": item.final_score,
