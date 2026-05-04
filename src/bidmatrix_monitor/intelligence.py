@@ -1350,6 +1350,8 @@ def _pr_angle(item: NewsItem) -> str:
 
 def _partner_or_sales_action(item: NewsItem) -> str:
     companies = ", ".join(item.mentioned_companies[:3])
+    if _has_all_terms(item, "appsflyer", "android sdk") or _has_terms(item, "ipv6", "release notes", "sdk 6.18.0"):
+        return "Track whether AppsFlyer connects this SDK update to attribution reliability, network compatibility, or Privacy Sandbox measurement workflows."
     if _has_terms(item, "tiktok", "vistar", "dooh", "out-of-home", "billboards"):
         return "Treat as broad cross-screen context only; watch whether TikTok connects DOOH inventory to measurable app campaign outcomes."
     if _has_terms(item, "state of fraud", "fraud report", "organic fraud") or _has_all_terms(item, "appsflyer", "fraud"):

@@ -76,7 +76,7 @@ def _telegram_message(subject: str, text: str, report_type: str) -> str:
     items = _report_items(text)
     all_top_items = [item for item in items if item.get('section') == 'top']
     adjacent_items = [item for item in items if item.get('section') == 'adjacent']
-    top_items = [item for item in all_top_items if item.get('confidence') in {'high', 'medium'}]
+    top_items = _select_telegram_digest_items(all_top_items, limit=3)
     intro = _daily_intro_line(text)
     suggests = _section_bullets(text, "## What This Suggests")
     angles = _section_bullets(text, "## BidMatrix Angles")
@@ -90,15 +90,16 @@ def _telegram_message(subject: str, text: str, report_type: str) -> str:
         shown = top_items[:3]
         for index, item in enumerate(shown, start=1):
             lines.extend(_telegram_item(item, index))
-        if len(top_items) > 3:
+        if len(all_top_items) > len(shown):
             lines.extend(["More items saved in the full report artifact.", ""])
     elif all_top_items or adjacent_items:
-        digest_items = all_top_items or adjacent_items
+        raw_digest_items = all_top_items or adjacent_items
+        digest_items = _select_telegram_digest_items(raw_digest_items, limit=3)
         lines.extend(["", "<b>Market Watch</b>", html.escape(_shorten(intro, 220)), "", "<b>Top market signals</b>"])
         shown = digest_items[:3]
         for index, item in enumerate(shown, start=1):
             lines.extend(_telegram_watchlist_item(item, index))
-        if len(digest_items) > 3:
+        if len(raw_digest_items) > len(shown):
             lines.extend(["More items saved in the full report artifact.", ""])
     else:
         intro_chunks = _daily_intro_paragraphs(text)
@@ -419,6 +420,77 @@ def _sync_intro_count(intro: str, count: int) -> str:
 
 def _source_name(item: dict[str, str]) -> str:
     return item.get("source") or item.get("url") or "source"
+
+
+def _select_telegram_digest_items(items: list[dict[str, str]], limit: int = 3) -> list[dict[str, str]]:
+    if not items:
+        return []
+    scored = [
+        (_telegram_item_priority(item), item)
+        for item in items
+    ]
+    filtered = [
+        item for score, item in scored
+        if score >= 8
+    ] or [item for _, item in scored]
+    ranked = sorted(
+        filtered,
+        key=lambda item: (-_telegram_item_priority(item), _telegram_item_company(item).lower(), item.get("title", "").lower()),
+    )
+    selected: list[dict[str, str]] = []
+    seen_companies: set[str] = set()
+    for item in ranked:
+        company = _telegram_item_company(item).lower()
+        if company and company in seen_companies:
+            continue
+        selected.append(item)
+        if company:
+            seen_companies.add(company)
+        if len(selected) >= limit:
+            return selected
+    for item in ranked:
+        if item in selected:
+            continue
+        selected.append(item)
+        if len(selected) >= limit:
+            break
+    return selected
+
+
+def _telegram_item_company(item: dict[str, str]) -> str:
+    title = item.get("title", "")
+    for separator in (" — ", " – ", " - "):
+        if separator in title:
+            return title.split(separator, 1)[0].strip()
+    return title.split(":", 1)[0].strip()
+
+
+def _telegram_item_priority(item: dict[str, str]) -> int:
+    text = " ".join(
+        [
+            item.get("title", ""),
+            item.get("why_it_matters", ""),
+            item.get("bidmatrix_angle", ""),
+            item.get("action", ""),
+            item.get("source", ""),
+        ]
+    ).lower()
+    score = {"high": 12, "medium": 8, "low": 4}.get(item.get("confidence", "medium"), 6)
+    if any(term in text for term in ("attribution", "skan", "privacy sandbox", "measurement", "mmp")):
+        score += 6
+    if any(term in text for term in ("fraud", "invalid traffic", "verified traffic", "traffic-quality", "traffic quality")):
+        score += 5
+    if any(term in text for term in ("ctv", "connected tv", "streaming inventory")):
+        score += 5
+    if any(term in text for term in ("ai-driven agents", "agent hub", "agentic", "optimization")):
+        score += 4
+    if any(term in text for term in ("dooh", "out-of-home", "billboards", "cross-screen")):
+        score += 1
+    if "older context" in text:
+        score -= 6
+    if any(term in text for term in ("android sdk", "sdk version", "release notes", "ipv6")):
+        score -= 7
+    return score
 
 def _clean_trailing_fragment(text: str) -> str:
     original = text.rstrip()

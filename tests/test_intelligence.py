@@ -2135,3 +2135,83 @@ def test_event_line_rewrites_leading_and_partner_into_clean_joint_title() -> Non
     line = _event_line(item, "TikTok")
     assert "TikTok — and Vistar Media" not in line
     assert line.startswith("TikTok x Vistar Media — packaging")
+
+
+def test_appsflyer_sdk_action_does_not_leak_kochava() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="balanced"),
+        topics=(Topic(id="mw", label="Market Watch", query="market watch"),),
+        sources=SourceConfig(high_signal_domains=("example.com",), fresh_priority_domains=("example.com",)),
+    )
+    item = _market_watch_candidate(
+        "AppsFlyer Android SDK 6.18.0 Release",
+        "AppsFlyer released Android SDK version 6.18.0, adding support for obtaining IPv6 addresses and improving network compatibility.",
+        "Recent SDK update improves IPv6 support amid growing mobile network requirements.",
+        companies=["AppsFlyer"],
+        days_old=48,
+    )
+    report = build_report([item], config)
+    action = report.daily_digest_items[0].partner_or_sales_action
+    assert "Kochava" not in action
+    assert "AppsFlyer" in action or "SDK update" in action or "attribution reliability" in action
+
+
+def test_telegram_avoids_duplicate_appsflyer_items_when_alternatives_exist() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="balanced", daily_digest_target=4),
+        topics=(Topic(id="mw", label="Market Watch", query="market watch"),),
+        sources=SourceConfig(high_signal_domains=("example.com",), background_priority_domains=("example.com",)),
+    )
+    items = [
+        _market_watch_candidate(
+            "AppsFlyer Agent Hub beta",
+            "AppsFlyer launched Agent Hub beta, a centralized platform for AI-driven agents providing actionable marketing insights and fraud optimization workflows.",
+            "Published 2026-04-16 as AppsFlyer expands AI workflow tools for marketers.",
+            companies=["AppsFlyer"],
+            days_old=18,
+        ),
+        _market_watch_candidate(
+            "State of ad fraud 2026: marketer report insights",
+            "AppsFlyer released a fraud report covering fraud risk, channel quality, and verified traffic.",
+            "Published 2026-04-23 as app marketers face rising fraud pressure.",
+            companies=["AppsFlyer"],
+            days_old=11,
+        ),
+        _market_watch_candidate(
+            "AppsFlyer Android SDK 6.18.0 Release",
+            "AppsFlyer released Android SDK version 6.18.0, adding support for obtaining IPv6 addresses and improving network compatibility.",
+            "Recent SDK update improves IPv6 support amid growing mobile network requirements.",
+            companies=["AppsFlyer"],
+            days_old=48,
+        ),
+        _market_watch_candidate(
+            "Moloco performance CTV for app marketers",
+            "Moloco launched performance CTV with MMP attribution and measurable ROI across streaming inventory.",
+            "Published 2026-04-22 as app marketers push CTV toward measurable performance outcomes.",
+            companies=["Moloco"],
+            days_old=12,
+        ),
+        _market_watch_candidate(
+            "Mobile ad fraud in the age of AI",
+            "Business of Apps published analysis of AI-driven mobile ad fraud, polluted retargeting pools, and channel-quality risks.",
+            "Published 2026-04-29 as app marketers face rising fraud pressure.",
+            companies=["Business of Apps"],
+            days_old=5,
+        ),
+    ]
+    report = build_report(items, config)
+    markdown = render_markdown(report)
+    message = _telegram_message(f"BidMatrix Daily Market Brief - {report.run_date.isoformat()}", markdown, "daily")
+    assert "AppsFlyer Agent Hub beta" in markdown
+    assert "Moloco performance CTV for app marketers" in markdown
+    assert "Mobile ad fraud in the age of AI" in markdown
+    assert "AppsFlyer Android SDK 6.18.0 Release" in markdown
+    assert "AppsFlyer Android SDK 6.18.0 Release" not in message
+    assert "Moloco" in message
+    assert "Mobile ad fraud" in message
