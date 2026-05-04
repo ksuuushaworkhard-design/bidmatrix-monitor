@@ -8,7 +8,7 @@
     "category": "news",
     "num_results_per_topic": 12,
     "max_age_hours": 24,
-    "request_timeout_seconds": 30,
+    "request_timeout_seconds": 12,
     "highlights": {
       "max_characters": 4000
     }

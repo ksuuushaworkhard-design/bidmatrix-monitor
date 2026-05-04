@@ -683,6 +683,40 @@ def test_exa_client_fails_open_when_market_watch_layer_times_out() -> None:
     assert errors == ["Adtech [market_watch_recent]: Exa search timed out for market_watch_recent"]
 
 
+def test_exa_client_skips_market_watch_when_fresh_layer_is_sufficient() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5),
+        topics=(Topic(id="a", label="Adtech", query="adtech"),),
+    )
+    client = object.__new__(ExaMonitorClient)
+    client._config = config
+    client._last_errors = []
+
+    topic = Topic(id="a", label="Adtech", query="adtech")
+    first = NewsItem(topic_id="a", topic_label="Adtech", title="One", url="https://example.com/one")
+    second = NewsItem(topic_id="a", topic_label="Adtech", title="Two", url="https://example.com/two")
+    third = NewsItem(topic_id="a", topic_label="Adtech", title="Three", url="https://example.com/three")
+    called_layers = []
+
+    def fake_search_topic_layer(inner_topic, layer):
+        called_layers.append(layer)
+        if layer == "daily_fresh_signals":
+            return [first, second]
+        if layer == "strategic_background":
+            return [third]
+        raise AssertionError("market_watch_recent should not run when fresh layer already found enough items")
+
+    client.search_topic_layer = fake_search_topic_layer  # type: ignore[method-assign]
+
+    items = client.search_topic(topic)
+
+    assert [item.title for item in items] == ["One", "Two", "Three"]
+    assert called_layers == ["daily_fresh_signals", "strategic_background"]
+
+
 def test_adjacent_only_signals_render_watchlist_without_strategic_context() -> None:
     config = MonitorConfig(
         brand_name="BidMatrix",

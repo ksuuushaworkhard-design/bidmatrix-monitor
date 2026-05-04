@@ -79,11 +79,23 @@ class ExaMonitorClient:
 
     def search_topic(self, topic: Topic) -> list[NewsItem]:
         items: list[NewsItem] = []
-        for layer in ("daily_fresh_signals", "market_watch_recent", "strategic_background"):
+        daily_items: list[NewsItem] = []
+        try:
+            daily_items = self.search_topic_layer(topic, "daily_fresh_signals")
+            items.extend(daily_items)
+        except Exception as exc:
+            self._last_errors.append(f"{topic.label} [daily_fresh_signals]: {exc}")
+
+        if len(daily_items) < 2:
             try:
-                items.extend(self.search_topic_layer(topic, layer))
+                items.extend(self.search_topic_layer(topic, "market_watch_recent"))
             except Exception as exc:
-                self._last_errors.append(f"{topic.label} [{layer}]: {exc}")
+                self._last_errors.append(f"{topic.label} [market_watch_recent]: {exc}")
+
+        try:
+            items.extend(self.search_topic_layer(topic, "strategic_background"))
+        except Exception as exc:
+            self._last_errors.append(f"{topic.label} [strategic_background]: {exc}")
         return items
 
     def pop_errors(self) -> list[str]:
@@ -168,10 +180,10 @@ def _layer_domains(sources, layer: str) -> tuple[str, ...]:
 
 def _layer_timeout_seconds(base_timeout: int, layer: str) -> int:
     if layer == "market_watch_recent":
-        return max(12, min(base_timeout, 20))
+        return max(6, min(base_timeout, 8))
     if layer == "strategic_background":
-        return max(15, min(base_timeout, 25))
-    return max(15, base_timeout)
+        return max(8, min(base_timeout, 10))
+    return max(8, min(base_timeout, 12))
 
 
 @contextmanager
