@@ -6,9 +6,19 @@
   "search": {
     "type": "deep",
     "category": "news",
-    "num_results_per_topic": 12,
+    "num_results_per_topic": 8,
     "max_age_hours": 24,
-    "request_timeout_seconds": 12,
+    "request_timeout_seconds": 20,
+    "market_watch_timeout_seconds": 12,
+    "strategic_background_timeout_seconds": 10,
+    "daily_total_budget_seconds": 240,
+    "max_queries_per_topic_layer": 10,
+    "max_strategic_background_queries": 3,
+    "max_market_watch_queries": 7,
+    "max_results_per_market_watch_query": 5,
+    "max_total_results_per_layer": 24,
+    "max_total_results_per_market_watch": 18,
+    "max_total_results_per_topic": 10,
     "highlights": {
       "max_characters": 4000
     }

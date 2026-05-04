@@ -17,6 +17,7 @@ def main() -> None:
     parser.add_argument("--weekly", action="store_true", help="Build a weekly digest from recent curated reports.")
     parser.add_argument("--days", type=int, default=7, help="Number of days to include for --weekly.")
     parser.add_argument("--diagnostics", action="store_true", help="Print curation diagnostics after a daily run.")
+    parser.add_argument("--debug-exa", action="store_true", help="Print detailed Exa query timing logs.")
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -33,7 +34,7 @@ def main() -> None:
 
     from .exa_client import ExaMonitorClient
 
-    client = ExaMonitorClient(config)
+    client = ExaMonitorClient(config, debug_exa=args.debug_exa)
     items = []
     exa_errors: list[str] = []
     for topic in config.topics:
@@ -46,11 +47,23 @@ def main() -> None:
             print(f"Exa error for {topic.label}: {exc}")
         exa_errors.extend(client.pop_errors())
 
+    if client.should_run_market_watch_recent():
+        print("Searching: Market Watch fallback")
+        try:
+            items.extend(client.search_market_watch_recent())
+        except Exception as exc:
+            message = f"market_watch_recent: {exc}"
+            exa_errors.append(message)
+            print(f"Exa error for market_watch_recent: {exc}")
+        exa_errors.extend(client.pop_errors())
+
     report = build_report(items, config, exa_errors=exa_errors)
+    report.diagnostics.update(client.collection_stats())
     markdown_path, json_path, curated_json_path = write_report(report, Path(config.outputs.report_dir))
     print(f"Wrote {markdown_path}")
     print(f"Wrote {json_path}")
     print(f"Wrote {curated_json_path}")
+    client.print_collection_summary()
     _print_pipeline_state(report.diagnostics)
     if args.diagnostics:
         _print_diagnostics(report.diagnostics)

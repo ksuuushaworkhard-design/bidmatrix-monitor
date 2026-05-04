@@ -21,6 +21,16 @@ class SearchSettings:
     max_age_hours: int | None = 24
     highlight_max_characters: int = 4000
     request_timeout_seconds: int = 30
+    market_watch_timeout_seconds: int = 12
+    strategic_background_timeout_seconds: int = 10
+    daily_total_budget_seconds: int = 240
+    max_queries_per_topic_layer: int = 10
+    max_strategic_background_queries: int = 3
+    max_market_watch_queries: int = 7
+    max_results_per_market_watch_query: int = 5
+    max_total_results_per_layer: int = 24
+    max_total_results_per_market_watch: int = 18
+    max_total_results_per_topic: int = 10
 
 
 @dataclass(frozen=True)

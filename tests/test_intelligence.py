@@ -5,7 +5,7 @@ from bidmatrix_monitor.models import MonitorConfig, NewsItem, OutputSettings, Se
 from bidmatrix_monitor.render import render_markdown
 from bidmatrix_monitor.weekly import render_weekly_markdown
 from bidmatrix_monitor.delivery import _telegram_message
-from bidmatrix_monitor.exa_client import ExaMonitorClient
+from bidmatrix_monitor.exa_client import ExaCollectionStats, ExaMonitorClient
 
 
 def test_dedupe_keeps_highest_relevance_for_url() -> None:
@@ -664,23 +664,31 @@ def test_exa_client_fails_open_when_market_watch_layer_times_out() -> None:
     )
     client = object.__new__(ExaMonitorClient)
     client._config = config
+    client._exa = None
+    client._debug_exa = False
     client._last_errors = []
+    client._stats = ExaCollectionStats()
+    client._query_counts = {}
+    client._layer_result_counts = {}
+    client._seen_raw_urls = set()
+    client._fresh_items_collected = 0
+    client._collection_started_at = 0.0
 
-    topic = Topic(id="a", label="Adtech", query="adtech")
     good = NewsItem(topic_id="a", topic_label="Adtech", title="Good", url="https://example.com/good")
 
-    def fake_search_topic_layer(inner_topic, layer):
+    def fake_search_topic_layer(inner_topic, layer, *, num_results=None):
         if layer == "market_watch_recent":
             raise TimeoutError("Exa search timed out for market_watch_recent")
         return [good]
 
     client.search_topic_layer = fake_search_topic_layer  # type: ignore[method-assign]
+    client._budget_exceeded = lambda: False  # type: ignore[method-assign]
 
-    items = client.search_topic(topic)
+    items = client.search_market_watch_recent()
 
-    assert len(items) == 2
+    assert items == []
     errors = client.pop_errors()
-    assert errors == ["Adtech [market_watch_recent]: Exa search timed out for market_watch_recent"]
+    assert errors[0].endswith("[market_watch_recent]: Exa search timed out for market_watch_recent")
 
 
 def test_exa_client_skips_market_watch_when_fresh_layer_is_sufficient() -> None:
@@ -693,7 +701,15 @@ def test_exa_client_skips_market_watch_when_fresh_layer_is_sufficient() -> None:
     )
     client = object.__new__(ExaMonitorClient)
     client._config = config
+    client._exa = None
+    client._debug_exa = False
     client._last_errors = []
+    client._stats = ExaCollectionStats()
+    client._query_counts = {}
+    client._layer_result_counts = {}
+    client._seen_raw_urls = set()
+    client._fresh_items_collected = 0
+    client._collection_started_at = 0.0
 
     topic = Topic(id="a", label="Adtech", query="adtech")
     first = NewsItem(topic_id="a", topic_label="Adtech", title="One", url="https://example.com/one")
@@ -701,20 +717,23 @@ def test_exa_client_skips_market_watch_when_fresh_layer_is_sufficient() -> None:
     third = NewsItem(topic_id="a", topic_label="Adtech", title="Three", url="https://example.com/three")
     called_layers = []
 
-    def fake_search_topic_layer(inner_topic, layer):
+    def fake_search_topic_layer(inner_topic, layer, *, num_results=None):
         called_layers.append(layer)
         if layer == "daily_fresh_signals":
             return [first, second]
         if layer == "strategic_background":
             return [third]
-        raise AssertionError("market_watch_recent should not run when fresh layer already found enough items")
+        raise AssertionError("unexpected extra layer")
 
     client.search_topic_layer = fake_search_topic_layer  # type: ignore[method-assign]
+    client._budget_exceeded = lambda: False  # type: ignore[method-assign]
+    client._can_run_layer = lambda layer: True  # type: ignore[method-assign]
 
     items = client.search_topic(topic)
 
     assert [item.title for item in items] == ["One", "Two", "Three"]
     assert called_layers == ["daily_fresh_signals", "strategic_background"]
+    assert client.should_run_market_watch_recent() is False
 
 
 def test_adjacent_only_signals_render_watchlist_without_strategic_context() -> None:
@@ -838,3 +857,102 @@ def test_omnicom_agentic_buying_gets_specific_angles() -> None:
     assert 'traffic quality' not in signal.why_it_matters_for_bidmatrix.lower() or 'automated buying still needs transparent supply' in signal.why_it_matters_for_bidmatrix.lower()
     assert signal.content_angle == 'AI agents are entering media buying — but who verifies the quality of what they buy?'
     assert 'is a good hook for a post about' not in signal.content_angle
+
+
+def test_partial_exa_results_still_produce_brief() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="broad"),
+        topics=(Topic(id="m", label="Measurement", query="measurement"),),
+        sources=SourceConfig(high_signal_domains=("example.com",), fresh_priority_domains=("example.com",)),
+    )
+    item = NewsItem(
+        topic_id="m",
+        topic_label="Measurement",
+        title="AppsFlyer updates attribution windows",
+        url="https://example.com/2026/05/02/appsflyer-update",
+        published_date=date.today().isoformat(),
+        summary="AppsFlyer updated attribution windows for mobile app marketers.",
+        why_it_matters="It changes live measurement decisions for app marketers.",
+        mentioned_companies=["AppsFlyer"],
+        relevance_score=5,
+    )
+    report = build_report([item], config, exa_errors=["market_watch_recent: timed out"])
+    markdown = render_markdown(report)
+    assert "## Top Signal" in markdown
+    assert "AppsFlyer" in markdown
+    assert "no Exa results were available" not in markdown
+
+
+def test_all_exa_requests_timeout_produces_monitor_error_without_placeholder() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5),
+        topics=(Topic(id="m", label="Measurement", query="measurement"),),
+    )
+    report = build_report([], config, exa_errors=["daily_fresh_signals: timeout", "market_watch_recent: timeout"])
+    markdown = render_markdown(report)
+    assert "no Exa results were available" in markdown
+    assert "Strategic Context" not in markdown
+    assert "Background context, not a fresh daily signal." not in markdown
+
+
+def test_market_watch_recent_timeout_does_not_block_final_rendering() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="broad"),
+        topics=(Topic(id="ai", label="AI", query="ai"),),
+        sources=SourceConfig(high_signal_domains=("example.com",), fresh_priority_domains=("example.com",)),
+    )
+    item = NewsItem(
+        topic_id="ai",
+        topic_label="AI",
+        title="Omnicom rolls out agentic media buying workflow",
+        url="https://example.com/2026/04/29/omnicom-agentic-buying",
+        published_date=date.today().isoformat(),
+        summary="Omnicom rolled out an agentic media buying workflow for live campaign operations and programmatic execution.",
+        why_it_matters="It moves AI buying from concept to live media operations.",
+        mentioned_companies=["Omnicom"],
+        relevance_score=5,
+    )
+    report = build_report([item], config, exa_errors=["market_watch_recent: timeout"])
+    message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-03", render_markdown(report), "daily")
+    assert "<b>Top signal</b>" in message
+    assert "Omnicom" in message
+    assert "<b>Monitor error</b>" not in message
+
+
+def test_market_watch_recent_timeout_does_not_crash_daily_run() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(max_market_watch_queries=2),
+        outputs=OutputSettings(min_relevance_score=5),
+        topics=(Topic(id="a", label="Adtech", query="adtech"),),
+    )
+    client = object.__new__(ExaMonitorClient)
+    client._config = config
+    client._exa = None
+    client._debug_exa = False
+    client._last_errors = []
+    client._stats = ExaCollectionStats()
+    client._query_counts = {}
+    client._layer_result_counts = {}
+    client._seen_raw_urls = set()
+    client._fresh_items_collected = 0
+    client._collection_started_at = 0.0
+    client._budget_exceeded = lambda: False  # type: ignore[method-assign]
+
+    def fake_search_topic_layer(inner_topic, layer, *, num_results=None):
+        raise TimeoutError("network slow")
+
+    client.search_topic_layer = fake_search_topic_layer  # type: ignore[method-assign]
+    items = client.search_market_watch_recent()
+    assert items == []
+    assert client.pop_errors()
