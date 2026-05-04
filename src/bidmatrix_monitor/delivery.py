@@ -406,6 +406,8 @@ def _shorten(text: str, max_chars: int) -> str:
 
 
 def _sync_intro_count(intro: str, count: int) -> str:
+    if "supplemented with" in intro.lower():
+        return intro
     noun = "signal" if count == 1 else "signals"
     updated = re.sub(r"^Found\s+\d+\s+", f"Found {count} ", intro, count=1)
     updated = re.sub(r"\bsignal\(s\)\b", noun, updated)

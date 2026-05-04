@@ -55,23 +55,29 @@ def build_report(
         and item.source_quality >= thresholds["background_min_source_quality"]
         and item.freshness_tier == "background_context"
         and item.final_score >= thresholds["background_min_score"]
-    ][:5]
+    ][:8]
     digest_target = max(2, min(config.outputs.daily_digest_target, 5))
     daily_signals, adjacent_watchlist, fallback_level_used, market_watch_meta = _select_daily_content(
         core_curated=core_curated,
         adjacent_curated=adjacent_curated,
+        background_candidates=all_background_items,
         deduped=deduped,
         thresholds=thresholds,
         target=digest_target,
     )
     daily_digest_items = daily_signals if daily_signals else adjacent_watchlist
-    background_items = all_background_items if (daily_signals or adjacent_watchlist) else []
+    digest_urls = {item.normalized_url for item in daily_digest_items}
+    background_items = [item for item in all_background_items if item.normalized_url not in digest_urls] if (daily_signals or adjacent_watchlist) else []
     report_items = _unique_items(curated + background_items + adjacent_watchlist + daily_digest_items)
     diagnostics = _diagnostics(items, deduped, curated, background_items, thresholds)
     diagnostics.update(exa_meta or {})
     diagnostics["kept_core_signals"] = len(core_curated)
     diagnostics["kept_adjacent_signals"] = len(adjacent_curated)
     diagnostics["selected_top_signals_count"] = len(daily_signals)
+    diagnostics["selected_core_items_count"] = int(market_watch_meta.get("selected_core_items_count", len(daily_signals)))
+    diagnostics["supplemental_items_count"] = int(
+        market_watch_meta.get("supplemental_items_count", max(0, len(daily_digest_items) - diagnostics["selected_core_items_count"]))
+    )
     diagnostics["selected_digest_items_count"] = len(daily_digest_items)
     diagnostics["fallback_level_used"] = fallback_level_used
     diagnostics.update(market_watch_meta)
@@ -139,6 +145,7 @@ def _daily_signals(curated: list[NewsItem], target: int) -> list[NewsItem]:
 def _select_daily_content(
     core_curated: list[NewsItem],
     adjacent_curated: list[NewsItem],
+    background_candidates: list[NewsItem],
     deduped: list[NewsItem],
     thresholds: dict[str, int | str],
     target: int,
@@ -146,26 +153,20 @@ def _select_daily_content(
     strong_core = [item for item in core_curated if item.confidence in {"high", "medium"}]
     daily_signals = _recent_signals(strong_core, target)
     if daily_signals:
-        if len(daily_signals) < max(2, target - 1):
-            supplement_pool = [
-                item
-                for item in deduped
-                if item.normalized_url not in {signal.normalized_url for signal in daily_signals}
-                and item.relevance_tier == "core"
-                and item.confidence in {"high", "medium"}
-                and item.source_quality >= int(thresholds["background_min_source_quality"])
-                and item.final_score >= max(int(thresholds["curated_min_score"]) - 1, 6)
-                and _is_within_days(item, 14)
-            ]
-            broader_recent, market_watch_meta = _recent_market_watch_items(
-                supplement_pool,
-                thresholds,
-                target=max(2, target - len(daily_signals)),
-                max_days=14,
+        if len(daily_signals) < min(3, target):
+            supplemental, market_watch_meta = _supplement_daily_digest(
+                primary=daily_signals,
+                adjacent_curated=adjacent_curated,
+                background_candidates=background_candidates,
+                deduped=deduped,
+                thresholds=thresholds,
+                target=target,
             )
-            if broader_recent:
-                merged = _merge_digest_items(daily_signals, broader_recent, target)
-                return merged, [], "core_plus_market_watch", market_watch_meta
+            if supplemental:
+                merged = _merge_digest_items(daily_signals, supplemental, target)
+                market_watch_meta["selected_core_items_count"] = len(daily_signals)
+                market_watch_meta["supplemental_items_count"] = len(merged) - len(daily_signals)
+                return merged, [], "core_plus_context", market_watch_meta
         if any(item.freshness_tier == "new_last_7d" and not _is_last_72h(item) for item in daily_signals):
             return daily_signals, [], "core_7d", {}
         if any(_is_last_72h(item) and item.freshness_tier != "new_last_24h" for item in daily_signals):
@@ -258,6 +259,81 @@ def _recent_market_watch_items(
     }
     return selected, meta
 
+
+def _supplement_daily_digest(
+    primary: list[NewsItem],
+    adjacent_curated: list[NewsItem],
+    background_candidates: list[NewsItem],
+    deduped: list[NewsItem],
+    thresholds: dict[str, int | str],
+    target: int,
+) -> tuple[list[NewsItem], dict[str, object]]:
+    primary_urls = {item.normalized_url for item in primary}
+    source_by_url: dict[str, str] = {}
+    ranked: list[tuple[int, str, NewsItem]] = []
+
+    def add_candidates(items: list[NewsItem], source_name: str, max_days: int) -> None:
+        for item in items:
+            if item.normalized_url in primary_urls or item.normalized_url in source_by_url:
+                continue
+            if item.relevance_tier == "ignore":
+                continue
+            if item.confidence not in {"high", "medium"}:
+                continue
+            if item.source_quality < int(thresholds["background_min_source_quality"]):
+                continue
+            if item.final_score < max(int(thresholds["curated_min_score"]) - 1, 6):
+                continue
+            if not _is_within_days(item, max_days):
+                continue
+            priority, reason = _market_watch_priority(item)
+            item.market_watch_priority_score = priority
+            item.market_watch_reason = reason
+            ranked.append((priority + _confidence_bonus(item), reason, item))
+            source_by_url[item.normalized_url] = source_name
+
+    add_candidates(adjacent_curated, "adjacent", 14)
+    add_candidates(background_candidates, "background", 30)
+    add_candidates(
+        [
+            item
+            for item in deduped
+            if item.relevance_tier in {"core", "adjacent"} and item.freshness_tier == "background_context"
+        ],
+        "market_watch",
+        30,
+    )
+    add_candidates(
+        [item for item in deduped if item.relevance_tier in {"core", "adjacent"}],
+        "best_available",
+        30,
+    )
+
+    ranked.sort(key=lambda value: (-value[0], -value[2].final_score, -value[2].freshness_confidence, value[2].title.lower()))
+    needed = max(0, min(target, 5) - len(primary))
+    selected = _select_diverse_market_watch_items(ranked, max(needed, 2), minimum=1)[:needed]
+    sources_used = []
+    for item in selected:
+        source_name = source_by_url.get(item.normalized_url)
+        if source_name and source_name not in sources_used:
+            sources_used.append(source_name)
+    meta: dict[str, object] = {
+        "market_watch_candidates_count": len(ranked),
+        "selected_market_watch_reason": selected[0].market_watch_reason if selected else "",
+        "selected_market_watch_priority_score": selected[0].market_watch_priority_score if selected else 0,
+        "supplemental_sources_used": sources_used,
+        "market_watch_rejections": [
+            {
+                "title": item.title,
+                "priority_score": priority,
+                "reason": reason,
+            }
+            for priority, reason, item in ranked
+            if item not in selected
+        ][:5],
+    }
+    return selected, meta
+
 def _sort_daily_bucket(items: list[NewsItem]) -> list[NewsItem]:
     return sorted(
         items,
@@ -282,11 +358,14 @@ def _daily_intro(
 ) -> str:
     count = len(daily_signals)
     if count:
-        if fallback_level_used == "core_plus_market_watch":
-            noun = "signal" if count == 1 else "signals"
+        if fallback_level_used == "core_plus_context":
+            core_count = int(diagnostics.get("selected_core_items_count", count))
+            supplemental_count = int(diagnostics.get("supplemental_items_count", 0))
+            core_noun = "signal" if core_count == 1 else "signals"
+            supplemental_noun = "signal" if supplemental_count == 1 else "signals"
             return (
-                f"Found {count} BidMatrix-relevant {noun} worth attention, mixing fresh coverage "
-                "with the best recent market signals available."
+                f"Found {core_count} core {core_noun} worth attention, supplemented with "
+                f"{supplemental_count} recent market {supplemental_noun} for context."
             )
         noun = 'signal' if count == 1 else 'signals'
         return f'Found {count} core {noun} worth attention today.'

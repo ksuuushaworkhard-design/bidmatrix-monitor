@@ -125,7 +125,7 @@ def test_build_report_keeps_daily_top_signals_recent_only() -> None:
     report = build_report([fresh, background_one, background_two], config)
 
     assert len(report.daily_signals) >= 1
-    assert report.diagnostics["fallback_level_used"] == "core_plus_market_watch"
+    assert report.diagnostics["fallback_level_used"] == "core_plus_context"
     assert len(report.daily_digest_items) >= 2
     assert report.daily_intro
 
@@ -441,7 +441,8 @@ def test_telegram_top_signals_only_include_core_items() -> None:
     markdown = render_markdown(report)
     message = _telegram_message("BidMatrix Daily Market Brief - 2026-04-29", markdown, "daily")
     assert "AppsFlyer" in message
-    assert "Overwolf Ads" not in message
+    assert "Overwolf Ads" in message
+    assert "supplemented with" in message
 
 
 def test_no_core_signals_message_includes_adjacent_watchlist() -> None:
@@ -1645,7 +1646,7 @@ def test_single_fresh_core_signal_is_supplemented_by_recent_digest_items() -> No
     ]
     report = build_report(items, config)
     assert len(report.daily_digest_items) >= 2
-    assert report.diagnostics["fallback_level_used"] == "core_plus_market_watch"
+    assert report.diagnostics["fallback_level_used"] == "core_plus_context"
 
 
 def test_primary_actor_prefers_publisher_over_secondary_entity() -> None:
@@ -1722,3 +1723,172 @@ def test_one_item_brief_only_happens_when_one_candidate_exists() -> None:
     report = build_report([item], config)
     assert len(report.daily_digest_items) == 1
     assert report.diagnostics["selected_digest_items_count"] == 1
+
+
+def test_core_signal_is_supplemented_by_background_items_to_reach_digest() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="balanced", daily_digest_target=4),
+        topics=(Topic(id="mw", label="Market Watch", query="market watch"),),
+        sources=SourceConfig(
+            high_signal_domains=("example.com", "exchangewire.com", "kochava.com"),
+            fresh_priority_domains=("example.com",),
+            background_priority_domains=("exchangewire.com", "kochava.com"),
+        ),
+    )
+    items = [
+        NewsItem(
+            topic_id="mw",
+            topic_label="Market Watch",
+            title="Mobile ad fraud in the age of AI: How fraud has evolved and how brands must fight back",
+            url="https://example.com/boa-fraud",
+            published_date=(date.today() - timedelta(days=2)).isoformat(),
+            summary="Business of Apps insight details AI evolution of mobile ad fraud and polluted retargeting funnels.",
+            why_now="Published 2026-04-29 as AI fraud pressure rises for app growth teams.",
+            mentioned_companies=["Business of Apps"],
+            relevance_score=5,
+        ),
+        NewsItem(
+            topic_id="mw",
+            topic_label="Market Watch",
+            title="Q1 2026 | Kochava Product & Partnerships Update Bulletin",
+            url="https://kochava.com/blog/kochava-product-partnership-updates-bulletin-q1-2026/",
+            published_date=(date.today() - timedelta(days=18)).isoformat(),
+            summary="Kochava published product and measurement updates including StationOne AI open beta and workflow improvements.",
+            why_now="Published 2026-04-16 as MMP workflows move toward AI-assisted optimization.",
+            mentioned_companies=["Kochava"],
+            relevance_score=5,
+        ),
+        NewsItem(
+            topic_id="mw",
+            topic_label="Market Watch",
+            title="LoopMe Launches Chartboost Direct, Bringing Brands into Mobile Apps to Drive Publisher Growth",
+            url="https://www.exchangewire.com/blog/2026/04/09/loopme-launches-chartboost-direct-bringing-brands-into-mobile-apps-to-drive-publisher-growth/",
+            published_date=(date.today() - timedelta(days=24)).isoformat(),
+            summary="LoopMe launched Chartboost Direct to create more direct brand-demand paths into app inventory.",
+            why_now="Published 2026-04-10 as brand budgets move deeper into curated in-app supply.",
+            mentioned_companies=["LoopMe", "Chartboost"],
+            relevance_score=5,
+        ),
+    ]
+    report = build_report(items, config)
+    titles = [item.title for item in report.daily_digest_items]
+    assert len(titles) == 3
+    assert any("Kochava" in title for title in titles)
+    assert any("LoopMe" in title for title in titles)
+    assert report.diagnostics["selected_core_items_count"] == 1
+    assert report.diagnostics["supplemental_items_count"] == 2
+    assert report.diagnostics["fallback_level_used"] == "core_plus_context"
+    assert "supplemented with 2 recent market signals for context" in report.daily_intro
+
+
+def test_supplement_avoids_duplicate_fraud_when_other_buckets_exist() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="balanced", daily_digest_target=4),
+        topics=(Topic(id="mw", label="Market Watch", query="market watch"),),
+        sources=SourceConfig(
+            high_signal_domains=("example.com", "kochava.com", "exchangewire.com"),
+            fresh_priority_domains=("example.com",),
+            background_priority_domains=("kochava.com", "exchangewire.com"),
+        ),
+    )
+    items = [
+        NewsItem(
+            topic_id="mw",
+            topic_label="Market Watch",
+            title="Fraudlogix Q1 2026 Ad Fraud Report",
+            url="https://example.com/fraudlogix",
+            published_date=(date.today() - timedelta(days=2)).isoformat(),
+            summary="Fraudlogix published Q1 2026 ad fraud stats with IVT and geo risk findings.",
+            why_now="Published 2026-04-29 amid rising AI fraud sophistication.",
+            mentioned_companies=["Fraudlogix"],
+            relevance_score=5,
+        ),
+        NewsItem(
+            topic_id="mw",
+            topic_label="Market Watch",
+            title="Mobile ad fraud in the age of AI",
+            url="https://example.com/boa-fraud",
+            published_date=(date.today() - timedelta(days=18)).isoformat(),
+            summary="Business of Apps published an AI-era fraud overview for mobile marketers.",
+            why_now="Published 2026-04-16 as AI fraud risk becomes a more practical performance issue.",
+            mentioned_companies=["Business of Apps"],
+            relevance_score=5,
+        ),
+        NewsItem(
+            topic_id="mw",
+            topic_label="Market Watch",
+            title="Q1 2026 | Kochava Product & Partnerships Update Bulletin",
+            url="https://kochava.com/blog/kochava-product-partnership-updates-bulletin-q1-2026/",
+            published_date=(date.today() - timedelta(days=18)).isoformat(),
+            summary="Kochava published product and measurement updates including StationOne AI open beta and workflow improvements.",
+            why_now="Published 2026-04-16 as MMP workflows move toward AI-assisted optimization.",
+            mentioned_companies=["Kochava"],
+            relevance_score=5,
+        ),
+        NewsItem(
+            topic_id="mw",
+            topic_label="Market Watch",
+            title="LoopMe Launches Chartboost Direct, Bringing Brands into Mobile Apps to Drive Publisher Growth",
+            url="https://www.exchangewire.com/blog/2026/04/09/loopme-launches-chartboost-direct-bringing-brands-into-mobile-apps-to-drive-publisher-growth/",
+            published_date=(date.today() - timedelta(days=24)).isoformat(),
+            summary="LoopMe launched Chartboost Direct to create more direct brand-demand paths into app inventory.",
+            why_now="Published 2026-04-10 as brand budgets move deeper into curated in-app supply.",
+            mentioned_companies=["LoopMe", "Chartboost"],
+            relevance_score=5,
+        ),
+    ]
+    report = build_report(items, config)
+    titles = [item.title for item in report.daily_digest_items]
+    assert sum("fraud" in title.lower() for title in titles) == 1
+    assert any("Kochava" in title for title in titles)
+    assert any("LoopMe" in title for title in titles)
+
+
+def test_digest_synthesis_appears_when_digest_is_supplemented() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="balanced", daily_digest_target=4),
+        topics=(Topic(id="mw", label="Market Watch", query="market watch"),),
+        sources=SourceConfig(
+            high_signal_domains=("example.com", "kochava.com", "exchangewire.com"),
+            fresh_priority_domains=("example.com",),
+            background_priority_domains=("kochava.com", "exchangewire.com"),
+        ),
+    )
+    items = [
+        NewsItem(
+            topic_id="mw",
+            topic_label="Market Watch",
+            title="Mobile ad fraud in the age of AI",
+            url="https://example.com/boa-fraud",
+            published_date=(date.today() - timedelta(days=2)).isoformat(),
+            summary="Business of Apps published an AI-era fraud overview for mobile marketers.",
+            why_now="Published 2026-04-29 as AI fraud risk becomes a more practical performance issue.",
+            mentioned_companies=["Business of Apps"],
+            relevance_score=5,
+        ),
+        NewsItem(
+            topic_id="mw",
+            topic_label="Market Watch",
+            title="Q1 2026 | Kochava Product & Partnerships Update Bulletin",
+            url="https://kochava.com/blog/kochava-product-partnership-updates-bulletin-q1-2026/",
+            published_date=(date.today() - timedelta(days=18)).isoformat(),
+            summary="Kochava published product and measurement updates including StationOne AI open beta and workflow improvements.",
+            why_now="Published 2026-04-16 as MMP workflows move toward AI-assisted optimization.",
+            mentioned_companies=["Kochava"],
+            relevance_score=5,
+        ),
+    ]
+    report = build_report(items, config)
+    assert len(report.daily_digest_items) >= 2
+    assert report.what_this_suggests
+    assert report.bidmatrix_angles
+    assert report.watch_next_items
