@@ -102,6 +102,8 @@ class NewsItem:
     concrete_action: str = ""
     partner_or_sales_action: str = ""
     watch_next: str = ""
+    market_watch_priority_score: int = 0
+    market_watch_reason: str = ""
     source_title: str = ""
     source_domain: str = ""
     source_url: str = ""

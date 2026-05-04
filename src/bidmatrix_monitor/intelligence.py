@@ -56,7 +56,7 @@ def build_report(
         and item.freshness_tier == "background_context"
         and item.final_score >= thresholds["background_min_score"]
     ][:5]
-    daily_signals, adjacent_watchlist, fallback_level_used = _select_daily_content(
+    daily_signals, adjacent_watchlist, fallback_level_used, market_watch_meta = _select_daily_content(
         core_curated=core_curated,
         adjacent_curated=adjacent_curated,
         deduped=deduped,
@@ -71,6 +71,7 @@ def build_report(
     diagnostics["kept_adjacent_signals"] = len(adjacent_curated)
     diagnostics["selected_top_signals_count"] = len(daily_signals)
     diagnostics["fallback_level_used"] = fallback_level_used
+    diagnostics.update(market_watch_meta)
     diagnostics["telegram_message_state"] = _telegram_message_state(daily_signals, adjacent_watchlist, background_items, items, exa_errors or [])
     diagnostics["exa_errors"] = list(exa_errors or [])
     trends = _trends(report_items, config.outputs.recurring_trend_min_mentions)
@@ -134,30 +135,53 @@ def _select_daily_content(
     deduped: list[NewsItem],
     thresholds: dict[str, int | str],
     target: int,
-) -> tuple[list[NewsItem], list[NewsItem], str]:
+) -> tuple[list[NewsItem], list[NewsItem], str, dict[str, object]]:
     strong_core = [item for item in core_curated if item.confidence in {"high", "medium"}]
     daily_signals = _recent_signals(strong_core, target)
     if daily_signals:
         if any(item.freshness_tier == "new_last_7d" and not _is_last_72h(item) for item in daily_signals):
-            return daily_signals, [], "core_7d"
+            return daily_signals, [], "core_7d", {}
         if any(_is_last_72h(item) and item.freshness_tier != "new_last_24h" for item in daily_signals):
-            return daily_signals, [], "core_72h"
-        return daily_signals, [], "core_24h"
+            return daily_signals, [], "core_72h", {}
+        return daily_signals, [], "core_24h", {}
 
     strong_adjacent = [item for item in adjacent_curated if item.confidence in {"high", "medium"}]
     adjacent_recent = _recent_signals(strong_adjacent, target=3)
     if adjacent_recent:
-        return [], adjacent_recent, "market_watch_7d"
+        for item in adjacent_recent:
+            if not item.market_watch_priority_score:
+                item.market_watch_priority_score, item.market_watch_reason = _market_watch_priority(item)
+        meta = {
+            "market_watch_candidates_count": len(strong_adjacent),
+            "selected_market_watch_reason": adjacent_recent[0].market_watch_reason or "adjacent_recent_signal",
+            "selected_market_watch_priority_score": adjacent_recent[0].market_watch_priority_score,
+            "market_watch_rejections": [],
+        }
+        return [], adjacent_recent, "market_watch_7d", meta
 
-    broader_recent = _recent_market_watch_items(deduped, thresholds, target=3)
+    broader_recent, market_watch_meta = _recent_market_watch_items(deduped, thresholds, target=3)
     if broader_recent:
-        return [], broader_recent, "market_watch_14d"
+        return [], broader_recent, "market_watch_14d", market_watch_meta
 
     older_recent = _best_available_recent_items(deduped, target=3)
     if older_recent:
-        return [], older_recent, "market_watch_best_available"
+        for item in older_recent:
+            if not item.market_watch_priority_score:
+                item.market_watch_priority_score, item.market_watch_reason = _market_watch_priority(item)
+        meta = {
+            "market_watch_candidates_count": len(older_recent),
+            "selected_market_watch_reason": "best_available_recent_signal",
+            "selected_market_watch_priority_score": older_recent[0].market_watch_priority_score,
+            "market_watch_rejections": [],
+        }
+        return [], older_recent, "market_watch_best_available", meta
 
-    return [], [], "empty"
+    return [], [], "empty", {
+        "market_watch_candidates_count": 0,
+        "selected_market_watch_reason": "",
+        "selected_market_watch_priority_score": 0,
+        "market_watch_rejections": [],
+    }
 
 
 def _recent_signals(items: list[NewsItem], target: int) -> list[NewsItem]:
@@ -176,7 +200,9 @@ def _recent_signals(items: list[NewsItem], target: int) -> list[NewsItem]:
     return selected
 
 
-def _recent_market_watch_items(items: list[NewsItem], thresholds: dict[str, int | str], target: int) -> list[NewsItem]:
+def _recent_market_watch_items(
+    items: list[NewsItem], thresholds: dict[str, int | str], target: int
+) -> tuple[list[NewsItem], dict[str, object]]:
     candidates = [
         item
         for item in items
@@ -186,10 +212,38 @@ def _recent_market_watch_items(items: list[NewsItem], thresholds: dict[str, int 
         and item.final_score >= max(int(thresholds["curated_min_score"]) - 1, 6)
         and _is_last_14d(item)
     ]
-    return sorted(
-        _unique_items(candidates),
-        key=lambda item: (-item.final_score, -item.freshness_confidence, item.title.lower()),
-    )[:target]
+    unique_candidates = _unique_items(candidates)
+    scored_candidates: list[tuple[int, str, NewsItem]] = []
+    for item in unique_candidates:
+        priority, reason = _market_watch_priority(item)
+        item.market_watch_priority_score = priority
+        item.market_watch_reason = reason
+        scored_candidates.append((priority, reason, item))
+
+    ranked = sorted(
+        scored_candidates,
+        key=lambda value: (
+            -value[0],
+            -value[2].final_score,
+            -value[2].freshness_confidence,
+            value[2].title.lower(),
+        ),
+    )
+    selected = [item for _, _, item in ranked[:target]]
+    meta: dict[str, object] = {
+        "market_watch_candidates_count": len(unique_candidates),
+        "selected_market_watch_reason": selected[0].market_watch_reason if selected else "",
+        "selected_market_watch_priority_score": selected[0].market_watch_priority_score if selected else 0,
+        "market_watch_rejections": [
+            {
+                "title": item.title,
+                "priority_score": priority,
+                "reason": reason,
+            }
+            for priority, reason, item in ranked[1:6]
+        ],
+    }
+    return selected, meta
 
 def _sort_daily_bucket(items: list[NewsItem]) -> list[NewsItem]:
     return sorted(
@@ -353,6 +407,31 @@ def _best_available_recent_items(items: list[NewsItem], target: int) -> list[New
         _unique_items(candidates),
         key=lambda item: (-item.final_score, -item.freshness_confidence, item.title.lower()),
     )[:target]
+
+
+def _market_watch_priority(item: NewsItem) -> tuple[int, str]:
+    text = _item_text(item)
+    if _has_terms(item, "appsflyer", "adjust", "singular", "airbridge", "kochava", "branch", "mmp", "attribution", "measurement", "skan", "privacy sandbox", "adattributionkit"):
+        return 100, "measurement_attribution_priority"
+    if _has_terms(item, "mobile user acquisition", "user acquisition", "app growth", "performance marketing", "app marketers", "app advertisers", "mobile marketing"):
+        return 90, "mobile_ua_app_growth_priority"
+    if _has_terms(item, "fraud", "invalid traffic", "ivt", "traffic quality", "brand safety", "viewability", "verified"):
+        return 80, "fraud_quality_priority"
+    if _has_terms(item, "ctv", "connected tv", "performance ctv", "installs", "mmp", "roi", "roas"):
+        return 70, "ctv_app_performance_priority"
+    if _has_terms(item, "ai media buying", "campaign optimization", "media optimization", "creative intelligence", "creative effectiveness", "budget shifts", "agentic media buying", "agentic"):
+        return 60, "ai_campaign_ops_priority"
+    if _has_terms(item, "programmatic", "in-app", "dsp", "ssp", "exchange", "inventory", "direct deals", "brand demand"):
+        return 50, "programmatic_in_app_priority"
+    if _has_terms(item, "applovin", "moloco", "liftoff", "adjust", "appsflyer", "singular", "airbridge", "kochava", "branch", "tenjin", "braze", "clevertap", "apptweak"):
+        return 40, "partner_competitor_priority"
+    if _has_terms(item, "report", "benchmark", "index", "conference", "summit", "mau", "business of apps", "mobile marketing reads"):
+        return 30, "industry_report_conference_priority"
+    if _has_terms(item, "overwolf", "gamer grid", "pc gaming", "gameplay", "hardware signals", "gamer", "gaming audience", "broad brand"):
+        return 10, "adjacent_gaming_watchlist_priority"
+    if item.relevance_tier == "adjacent" or "indirect" in (item.why_it_matters_for_bidmatrix or "").lower():
+        return 5, "indirect_watchlist_priority"
+    return 20, "general_market_watch_priority"
 
 
 def _score_item(item: NewsItem, config: MonitorConfig | None) -> NewsItem:
@@ -863,9 +942,15 @@ def _linkedin_angle(item: NewsItem) -> str:
 
 def _bidmatrix_angle(item: NewsItem) -> str:
     company = _lead_entity(item)
+    if _has_terms(item, "appsflyer", "adjust", "singular", "airbridge", "kochava", "branch", "mmp", "attribution", "measurement", "skan", "privacy sandbox", "adattributionkit"):
+        return "Supports BidMatrix positioning around attribution resilience, privacy-safe optimization, and cleaner performance decision-making for app growth teams."
+    if _has_terms(item, 'ias', 'total tv', 'connected tv', 'ctv', 'device verification'):
+        return 'Gives BidMatrix a concrete angle on transparent CTV, verified environments, and performance measurement beyond impressions.'
+    if _has_terms(item, 'fraud', 'invalid traffic', 'quality', 'brand safety', 'viewability'):
+        return 'Strengthens BidMatrix positioning around quality traffic, safer in-app supply, and performance protection.'
     if _has_terms(item, 'omnicom', 'agentic media buying', 'agentic buying', 'media buying agents', 'agentic'):
         return "Agentic buying is moving from concept to live media operations. This supports BidMatrix's AI-native positioning, but the useful angle is not AI hype — it is how automated buying still needs transparent supply, measurable outcomes, and human QA around performance."
-    if _has_terms(item, 'ias', 'total tv', 'connected tv', 'ctv', 'viewability', 'device verification', 'invalid traffic'):
+    if _has_terms(item, 'connected tv', 'ctv', 'viewability', 'device verification', 'invalid traffic'):
         return 'Gives BidMatrix a concrete angle on transparent CTV, verified environments, and performance measurement beyond impressions.'
     if _has_terms(item, 'doubleverify', 'slopstopper', 'ai-generated content', 'brand suitability', 'youtube'):
         return 'Strengthens BidMatrix positioning around traffic quality in the AI-content era, where low-quality impressions can quietly erode performance.'
@@ -875,10 +960,6 @@ def _bidmatrix_angle(item: NewsItem) -> str:
         return 'Relevance to BidMatrix is indirect; keep as watchlist only.'
     if _has_terms(item, 'chartboost direct', 'brand demand', 'direct deals', 'marketplace', 'publisher'):
         return 'Gives BidMatrix a cleaner angle on curated in-app supply, premium inventory quality, and brand budgets moving deeper into apps.'
-    if _has_terms(item, 'fraud', 'invalid traffic', 'quality', 'brand safety', 'viewability'):
-        return 'Strengthens BidMatrix positioning around quality traffic, safer in-app supply, and performance protection.'
-    if _has_terms(item, 'measurement', 'attribution', 'skan', 'privacy sandbox', 'adattributionkit', 'mmp'):
-        return 'Gives BidMatrix a stronger angle on measurement clarity, attribution resilience, and verified decision-making.'
     if _has_terms(item, 'daivid', 'adin.ai', 'creative effectiveness', 'creative intelligence', 'budget shifts'):
         return 'Useful for BidMatrix AI-native positioning: AI in performance marketing is moving from content generation to decision support, including creative scoring, budget shifts, and measurable outcomes.'
     if _has_terms(item, 'ai', 'creative', 'generative ai', 'optimization'):

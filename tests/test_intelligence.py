@@ -1,4 +1,5 @@
 from datetime import date, timedelta
+from typing import Optional, List
 
 from bidmatrix_monitor.intelligence import build_report, dedupe_items
 from bidmatrix_monitor.models import MonitorConfig, NewsItem, OutputSettings, SearchSettings, SourceConfig, Topic
@@ -1074,3 +1075,255 @@ def test_budget_reached_message_is_not_monitor_error() -> None:
     report = build_report([item], config, exa_meta={"exa_budget_exceeded": True})
     assert "fallback search budget was reached" in report.daily_intro
     assert report.diagnostics["telegram_message_state"] != "monitor_error"
+
+
+def _market_watch_candidate(
+    title: str,
+    summary: str,
+    why_now: str,
+    *,
+    days_old: int = 8,
+    companies: Optional[List[str]] = None,
+) -> NewsItem:
+    slug = title.lower().replace(" ", "-").replace("/", "-")
+    return NewsItem(
+        topic_id="mw",
+        topic_label="Market Watch",
+        title=title,
+        url=f"https://example.com/2026/04/{max(1, 30 - days_old):02d}/{slug}",
+        published_date=(date.today() - timedelta(days=days_old)).isoformat(),
+        summary=summary,
+        why_now=why_now,
+        mentioned_companies=companies or [],
+        relevance_score=5,
+    )
+
+
+def test_overwolf_loses_to_attribution_market_watch_item() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="balanced"),
+        topics=(Topic(id="mw", label="Market Watch", query="market watch"),),
+        sources=SourceConfig(high_signal_domains=("example.com",), fresh_priority_domains=("example.com",)),
+    )
+    overwolf = _market_watch_candidate(
+        "Overwolf Ads Launches Gamer Grid",
+        "Overwolf Ads launched Gamer Grid for PC gaming audience targeting using deterministic gameplay behavior and hardware signals.",
+        "Timely for game launches and gaming ad growth.",
+        companies=["Overwolf Ads"],
+    )
+    attribution = _market_watch_candidate(
+        "AppsFlyer updates SKAN measurement workflow",
+        "AppsFlyer updated SKAN and attribution guidance for app marketers using Privacy Sandbox and MMP workflows.",
+        "Measurement teams need this change for live attribution decisions.",
+        companies=["AppsFlyer"],
+    )
+    report = build_report([overwolf, attribution], config)
+    assert report.diagnostics["fallback_level_used"] == "market_watch_14d"
+    assert report.adjacent_watchlist[0].title == attribution.title
+    assert report.diagnostics["selected_market_watch_reason"] == "measurement_attribution_priority"
+    assert report.diagnostics["selected_market_watch_priority_score"] > report.adjacent_watchlist[-1].market_watch_priority_score
+
+
+def test_overwolf_loses_to_ctv_performance_item() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="balanced"),
+        topics=(Topic(id="mw", label="Market Watch", query="market watch"),),
+        sources=SourceConfig(high_signal_domains=("example.com",), fresh_priority_domains=("example.com",)),
+    )
+    overwolf = _market_watch_candidate(
+        "Overwolf Ads Launches Gamer Grid",
+        "Overwolf Ads launched Gamer Grid for PC gaming audience targeting using deterministic gameplay behavior and hardware signals.",
+        "Timely for game launches and gaming ad growth.",
+        companies=["Overwolf Ads"],
+    )
+    ctv = _market_watch_candidate(
+        "Moloco launches performance CTV for app marketers",
+        "Moloco launched performance CTV with connected TV campaign optimization, install outcomes, and measurable ROI across streaming inventory.",
+        "CTV is being used like performance media rather than reach-only media.",
+        companies=["Moloco"],
+    )
+    report = build_report([overwolf, ctv], config)
+    assert report.adjacent_watchlist[0].title == ctv.title
+    assert report.diagnostics["selected_market_watch_priority_score"] > overwolf.market_watch_priority_score
+
+
+def test_overwolf_loses_to_fraud_quality_item() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="balanced"),
+        topics=(Topic(id="mw", label="Market Watch", query="market watch"),),
+        sources=SourceConfig(high_signal_domains=("example.com",), fresh_priority_domains=("example.com",)),
+    )
+    overwolf = _market_watch_candidate(
+        "Overwolf Ads Launches Gamer Grid",
+        "Overwolf Ads launched Gamer Grid for PC gaming audience targeting using deterministic gameplay behavior and hardware signals.",
+        "Timely for game launches and gaming ad growth.",
+        companies=["Overwolf Ads"],
+    )
+    fraud = _market_watch_candidate(
+        "DoubleVerify expands traffic quality controls",
+        "DoubleVerify expanded fraud, invalid traffic, and brand safety controls for advertisers buying mobile inventory.",
+        "Traffic quality controls matter immediately for campaign performance protection.",
+        companies=["DoubleVerify"],
+    )
+    report = build_report([overwolf, fraud], config)
+    assert report.adjacent_watchlist[0].title == fraud.title
+    assert report.diagnostics["selected_market_watch_reason"] == "fraud_quality_priority"
+
+
+def test_overwolf_loses_to_ai_media_buying_item() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="balanced"),
+        topics=(Topic(id="mw", label="Market Watch", query="market watch"),),
+        sources=SourceConfig(high_signal_domains=("example.com",), fresh_priority_domains=("example.com",)),
+    )
+    overwolf = _market_watch_candidate(
+        "Overwolf Ads Launches Gamer Grid",
+        "Overwolf Ads launched Gamer Grid for PC gaming audience targeting using deterministic gameplay behavior and hardware signals.",
+        "Timely for game launches and gaming ad growth.",
+        companies=["Overwolf Ads"],
+    )
+    ai_ops = _market_watch_candidate(
+        "Omnicom rolls out agentic media buying workflow",
+        "Omnicom rolled out AI media buying and campaign optimization workflows for live media operations.",
+        "AI campaign operations are moving into live media buying decisions.",
+        companies=["Omnicom"],
+    )
+    report = build_report([overwolf, ai_ops], config)
+    assert report.adjacent_watchlist[0].title == ai_ops.title
+    assert report.diagnostics["selected_market_watch_reason"] == "ai_campaign_ops_priority"
+
+
+def test_overwolf_selected_only_when_no_better_market_watch_exists() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="balanced"),
+        topics=(Topic(id="mw", label="Market Watch", query="market watch"),),
+        sources=SourceConfig(high_signal_domains=("example.com",), fresh_priority_domains=("example.com",)),
+    )
+    overwolf = _market_watch_candidate(
+        "Overwolf Ads Launches Gamer Grid",
+        "Overwolf Ads launched Gamer Grid for PC gaming audience targeting using deterministic gameplay behavior and hardware signals.",
+        "Timely for game launches and gaming ad growth.",
+        companies=["Overwolf Ads"],
+    )
+    report = build_report([overwolf], config)
+    assert report.adjacent_watchlist[0].title == overwolf.title
+    assert report.diagnostics["selected_market_watch_reason"] == "adjacent_gaming_watchlist_priority"
+
+
+def test_appsflyer_skan_does_not_get_ctv_bidmatrix_use() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="balanced"),
+        topics=(Topic(id="mw", label="Market Watch", query="market watch"),),
+        sources=SourceConfig(high_signal_domains=("example.com",), fresh_priority_domains=("example.com",)),
+    )
+    item = _market_watch_candidate(
+        "AppsFlyer updates SKAN measurement workflow",
+        "AppsFlyer updated SKAN and attribution guidance for app marketers using Privacy Sandbox and MMP workflows.",
+        "Measurement teams need this change for live attribution decisions.",
+        companies=["AppsFlyer"],
+    )
+    report = build_report([item], config)
+    angle = report.adjacent_watchlist[0].why_it_matters_for_bidmatrix
+    assert "attribution resilience" in angle.lower()
+    assert "privacy-safe optimization" in angle.lower()
+    assert "ctv" not in angle.lower()
+
+
+def test_ctv_item_gets_ctv_specific_bidmatrix_use() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="balanced"),
+        topics=(Topic(id="mw", label="Market Watch", query="market watch"),),
+        sources=SourceConfig(high_signal_domains=("example.com",), fresh_priority_domains=("example.com",)),
+    )
+    item = _market_watch_candidate(
+        "Moloco launches performance CTV for app marketers",
+        "Moloco launched performance CTV with connected TV campaign optimization, install outcomes, and measurable ROI across streaming inventory.",
+        "CTV is being used like performance media rather than reach-only media.",
+        companies=["Moloco"],
+    )
+    report = build_report([item], config)
+    angle = report.adjacent_watchlist[0].why_it_matters_for_bidmatrix
+    assert "ctv" in angle.lower()
+    assert "verified environments" in angle.lower() or "measurement beyond impressions" in angle.lower()
+
+
+def test_fraud_item_gets_quality_bidmatrix_use() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="balanced"),
+        topics=(Topic(id="mw", label="Market Watch", query="market watch"),),
+        sources=SourceConfig(high_signal_domains=("example.com",), fresh_priority_domains=("example.com",)),
+    )
+    item = _market_watch_candidate(
+        "DoubleVerify expands traffic quality controls",
+        "DoubleVerify expanded fraud, invalid traffic, and brand safety controls for advertisers buying mobile inventory.",
+        "Traffic quality controls matter immediately for campaign performance protection.",
+        companies=["DoubleVerify"],
+    )
+    report = build_report([item], config)
+    angle = report.adjacent_watchlist[0].why_it_matters_for_bidmatrix
+    assert "traffic quality" in angle.lower() or "verified traffic" in angle.lower() or "performance protection" in angle.lower()
+
+
+def test_ai_media_buying_item_gets_ai_bidmatrix_use() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="balanced"),
+        topics=(Topic(id="mw", label="Market Watch", query="market watch"),),
+        sources=SourceConfig(high_signal_domains=("example.com",), fresh_priority_domains=("example.com",)),
+    )
+    item = _market_watch_candidate(
+        "Omnicom rolls out agentic media buying workflow",
+        "Omnicom rolled out AI media buying and campaign optimization workflows for live media operations.",
+        "AI campaign operations are moving into live media buying decisions.",
+        companies=["Omnicom"],
+    )
+    report = build_report([item], config)
+    angle = report.adjacent_watchlist[0].why_it_matters_for_bidmatrix
+    assert "ai-native" in angle.lower() or "automated buying" in angle.lower() or "decision support" in angle.lower()
+
+
+def test_overwolf_stays_indirect_watchlist_only() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="balanced"),
+        topics=(Topic(id="mw", label="Market Watch", query="market watch"),),
+        sources=SourceConfig(high_signal_domains=("example.com",), fresh_priority_domains=("example.com",)),
+    )
+    item = _market_watch_candidate(
+        "Overwolf Ads Launches Gamer Grid",
+        "Overwolf Ads launched Gamer Grid for PC gaming audience targeting using deterministic gameplay behavior and hardware signals.",
+        "Timely for game launches and gaming ad growth.",
+        companies=["Overwolf Ads"],
+    )
+    report = build_report([item], config)
+    angle = report.adjacent_watchlist[0].why_it_matters_for_bidmatrix
+    assert "indirect" in angle.lower()
+    assert "watchlist only" in angle.lower()
