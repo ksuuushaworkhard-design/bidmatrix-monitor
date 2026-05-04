@@ -87,13 +87,19 @@ def _telegram_message(subject: str, text: str, report_type: str) -> str:
     if top_items and intro.lower().startswith("found "):
         lines.extend(["", "<b>Today's useful signals</b>", html.escape(_shorten(_sync_intro_count(intro, len(top_items)), 220))])
         lines.extend(['', '<b>Top market signal</b>' if len(top_items) == 1 else '<b>Top market signals</b>'])
-        for index, item in enumerate(top_items[:3], start=1):
+        shown = top_items[:3]
+        for index, item in enumerate(shown, start=1):
             lines.extend(_telegram_item(item, index))
+        if len(top_items) > 3:
+            lines.extend(["More items saved in the full report artifact.", ""])
     elif all_top_items or adjacent_items:
         digest_items = all_top_items or adjacent_items
         lines.extend(["", "<b>Market Watch</b>", html.escape(_shorten(intro, 220)), "", "<b>Top market signals</b>"])
-        for index, item in enumerate(digest_items[:3], start=1):
+        shown = digest_items[:3]
+        for index, item in enumerate(shown, start=1):
             lines.extend(_telegram_watchlist_item(item, index))
+        if len(digest_items) > 3:
+            lines.extend(["More items saved in the full report artifact.", ""])
     else:
         intro_chunks = _daily_intro_paragraphs(text)
         heading = "<b>Monitor error</b>" if any("no Exa results were available" in chunk for chunk in intro_chunks) else "<b>Market Watch</b>"
@@ -352,24 +358,15 @@ def _section_bullets(text: str, heading: str) -> list[str]:
 def _telegram_item(item: dict[str, str], index: int) -> list[str]:
     lines = [
         f"{index}. {html.escape(_clean_trailing_fragment(_shorten(item['title'], 180)))}",
-        "<b>What happened</b>",
-        html.escape(_executive_line(item.get("what_happened") or item["title"], 260)),
         "<b>Why it matters</b>",
-        html.escape(_executive_line(item.get("why_it_matters") or item["title"], 500)),
+        html.escape(_executive_line(item.get("why_it_matters") or item["title"], 220)),
         "<b>BidMatrix angle</b>",
-        html.escape(_executive_line((item.get("bidmatrix_angle") or item.get("content_angle") or item["title"]).replace(": ", " — "), 320)),
-    ]
-    if item.get("content_angle"):
-        lines.extend([
-            "<b>Content angle</b>",
-            html.escape(_executive_line(item.get("content_angle"), 180)),
-        ])
-    lines.extend([
+        html.escape(_executive_line((item.get("bidmatrix_angle") or item.get("content_angle") or item["title"]).replace(": ", " — "), 200)),
         "<b>Action</b>",
         html.escape(_executive_line(item.get("action") or item.get("watch_next") or "Keep monitoring this signal for follow-up moves.", 180)),
         "<b>Source</b>",
         html.escape(_source_name(item)),
-    ])
+    ]
     if item.get("url"):
         lines.append(html.escape(item["url"]))
     lines.append("")
@@ -383,6 +380,8 @@ def _telegram_watchlist_item(item: dict[str, str], index: int) -> list[str]:
         html.escape(_executive_line(item.get("why_it_matters") or item["title"], 220)),
         "<b>BidMatrix use</b>",
         html.escape(_executive_line(item.get("bidmatrix_angle") or "Relevance to BidMatrix is indirect; keep as watchlist only.", 200)),
+        "<b>Action</b>",
+        html.escape(_executive_line(item.get("action") or item.get("watch_next") or "Keep monitoring this signal for follow-up moves.", 160)),
         "<b>Source</b>",
         html.escape(_source_name(item)),
     ]

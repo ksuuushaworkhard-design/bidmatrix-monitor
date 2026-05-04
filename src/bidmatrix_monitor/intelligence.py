@@ -589,7 +589,7 @@ def _best_available_recent_items(items: list[NewsItem], target: int) -> tuple[li
         priority, reason = _market_watch_priority(item)
         item.market_watch_priority_score = priority
         item.market_watch_reason = reason
-        ranked.append((priority + _confidence_bonus(item), reason, item))
+        ranked.append((priority + _confidence_bonus(item) + _recency_priority_adjustment(item), reason, item))
     ranked.sort(key=lambda value: (-value[0], -value[2].final_score, -value[2].freshness_confidence, value[2].title.lower()))
     selected = _select_diverse_market_watch_items(ranked, target, minimum=2)
     meta = {
@@ -663,18 +663,34 @@ def _confidence_bonus(item: NewsItem) -> int:
     return {"high": 8, "medium": 4, "low": 0}.get(item.confidence, 0)
 
 
+def _recency_priority_adjustment(item: NewsItem) -> int:
+    published = _parse_date(item.published_date) or _date_from_url(item.url)
+    if not published:
+        return -4 if item.freshness_tier == "background_context" else 0
+    age_days = (date.today() - published).days
+    if age_days > 30:
+        return -20
+    if age_days > 21:
+        return -8
+    if age_days > 14:
+        return -4
+    return 0
+
+
 def _merge_digest_items(primary: list[NewsItem], supplements: list[NewsItem], target: int) -> list[NewsItem]:
     ranked: list[tuple[int, str, NewsItem]] = []
     for item in primary + supplements:
         if not item.market_watch_priority_score:
             item.market_watch_priority_score, item.market_watch_reason = _market_watch_priority(item)
-        ranked.append((item.market_watch_priority_score + _confidence_bonus(item), item.market_watch_reason, item))
+        ranked.append((item.market_watch_priority_score + _confidence_bonus(item) + _recency_priority_adjustment(item), item.market_watch_reason, item))
     ranked.sort(key=lambda value: (-value[0], -value[2].final_score, -value[2].freshness_confidence, value[2].title.lower()))
     return _select_diverse_market_watch_items(ranked, target, minimum=min(2, target))
 
 
 def _market_watch_priority(item: NewsItem) -> tuple[int, str]:
     text = _item_text(item)
+    if _has_terms(item, "tiktok", "vistar", "dooh", "out-of-home", "billboards"):
+        return 25, "cross_screen_context_priority"
     if _has_terms(item, "appsflyer", "adjust", "singular", "airbridge", "kochava", "branch", "mmp", "attribution", "skan", "privacy sandbox", "adattributionkit", "measurement partner", "conversion value", "postback"):
         return 100, "measurement_attribution_priority"
     if _has_terms(item, "mobile user acquisition", "user acquisition", "app growth", "performance marketing", "app marketers", "app advertisers", "mobile marketing"):
@@ -699,6 +715,8 @@ def _market_watch_priority(item: NewsItem) -> tuple[int, str]:
 
 
 def _market_watch_bucket(item: NewsItem) -> str:
+    if _has_terms(item, "tiktok", "vistar", "dooh", "out-of-home", "billboards"):
+        return "cross_screen_context"
     if _has_terms(item, "appsflyer", "adjust", "singular", "airbridge", "kochava", "branch", "mmp", "attribution", "skan", "privacy sandbox", "adattributionkit", "measurement partner", "conversion value", "postback", "incrementality", "mmm"):
         return "measurement"
     if _has_terms(item, "fraud", "invalid traffic", "ivt", "traffic quality", "brand safety", "viewability", "fraud detection"):
@@ -1289,6 +1307,12 @@ def _linkedin_angle(item: NewsItem) -> str:
 
 def _bidmatrix_angle(item: NewsItem) -> str:
     company = _lead_entity(item)
+    if _has_terms(item, "tiktok", "vistar", "dooh", "out-of-home", "billboards"):
+        return "Broad cross-screen context; relevant only if DOOH becomes measurable for app campaigns or retargeting."
+    if _has_terms(item, "state of fraud", "fraud report", "organic fraud") or _has_all_terms(item, "appsflyer", "fraud"):
+        return "Strengthens BidMatrix positioning around quality traffic, safer in-app supply, and performance protection."
+    if _has_terms(item, 'performance ctv', 'connected tv', 'streaming inventory', 'tv attribution') or _has_all_terms(item, 'moloco', 'ctv'):
+        return 'Gives BidMatrix a concrete angle on transparent CTV, verified environments, and performance measurement beyond impressions.'
     if _has_terms(item, "appsflyer", "adjust", "singular", "airbridge", "kochava", "branch", "mmp", "attribution", "measurement", "skan", "privacy sandbox", "adattributionkit"):
         return "Supports BidMatrix positioning around attribution resilience, privacy-safe optimization, and cleaner performance decision-making for app growth teams."
     if _has_terms(item, 'ias', 'total tv', 'connected tv', 'ctv', 'device verification'):
@@ -1301,8 +1325,6 @@ def _bidmatrix_angle(item: NewsItem) -> str:
         return 'Gives BidMatrix a concrete angle on transparent CTV, verified environments, and performance measurement beyond impressions.'
     if _has_terms(item, 'doubleverify', 'slopstopper', 'ai-generated content', 'brand suitability', 'youtube'):
         return 'Strengthens BidMatrix positioning around traffic quality in the AI-content era, where low-quality impressions can quietly erode performance.'
-    if _has_terms(item, 'moloco', 'performance ctv', 'mmp', 'household', 'roi', 'installs'):
-        return 'Supports a BidMatrix point of view that CTV is becoming measurable app-growth media, not just an awareness channel.'
     if _has_terms(item, 'overwolf', 'gamer grid', 'gameplay', 'hardware signals', 'gamer'):
         return 'Relevance to BidMatrix is indirect; keep as watchlist only.'
     if _has_terms(item, 'chartboost direct', 'brand demand', 'direct deals', 'marketplace', 'publisher'):
@@ -1328,12 +1350,18 @@ def _pr_angle(item: NewsItem) -> str:
 
 def _partner_or_sales_action(item: NewsItem) -> str:
     companies = ", ".join(item.mentioned_companies[:3])
+    if _has_terms(item, "tiktok", "vistar", "dooh", "out-of-home", "billboards"):
+        return "Treat as broad cross-screen context only; watch whether TikTok connects DOOH inventory to measurable app campaign outcomes."
+    if _has_terms(item, "state of fraud", "fraud report", "organic fraud") or _has_all_terms(item, "appsflyer", "fraud"):
+        return "Use this as supporting context for BidMatrix traffic-quality messaging, especially around fraud risk, channel quality, and verified traffic."
+    if _has_terms(item, "performance ctv", "connected tv", "streaming inventory", "tv attribution") or _has_all_terms(item, "moloco", "ctv"):
+        return "Watch whether Moloco publishes app-marketer case studies or MMP-attributed CTV outcomes that reinforce CTV as performance media."
+    if _has_terms(item, "kochava", "certified partners program", "certified partners", "integration quality", "stationone ai", "iab workspace"):
+        return "Track whether Kochava turns these certified integrations into measurable workflow or partner-quality claims for app marketers."
     if _has_terms(item, "appsflyer", "adjust", "singular", "airbridge", "kochava", "branch", "mmp", "attribution", "measurement", "skan", "privacy sandbox", "adattributionkit", "stationone ai", "iab workspace"):
         return "Track whether Kochava expands StationOne AI beyond beta, publishes customer use cases, or connects it more directly to attribution and optimization workflows."
     if _has_terms(item, "fraud", "invalid traffic", "ivt", "traffic quality", "brand safety", "viewability", "fraud detection"):
         return "Use this as supporting context for BidMatrix traffic-quality messaging, especially around verified sources, IVT pressure, and AI-driven fraud risks."
-    if _has_terms(item, "moloco", "performance ctv", "mmp", "household", "roi", "installs"):
-        return "Watch whether Moloco publishes app-marketer case studies or MMP-attributed CTV outcomes that reinforce CTV as performance media."
     if _has_terms(item, "ias", "total tv", "connected tv", "ctv", "viewability", "device verification"):
         return "Use this in messaging about verified CTV environments, measurable premium inventory, and app-growth outcomes beyond impressions."
     if _has_terms(item, "doubleverify", "slopstopper", "ai-generated content", "brand suitability", "youtube"):
@@ -1420,6 +1448,10 @@ def _has_terms(item: NewsItem, *terms: str) -> bool:
         if re.search(pattern, text):
             return True
     return False
+
+
+def _has_all_terms(item: NewsItem, *terms: str) -> bool:
+    return all(_has_terms(item, term) for term in terms)
 
 def _primary_company_or_topic(item: NewsItem) -> str:
     texts = [item.what_happened, item.summary, item.title]

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, datetime
 import json
 import re
 from pathlib import Path
@@ -147,7 +148,7 @@ def _digest_signal_cards(items: list[NewsItem], market_watch: bool = False) -> l
                 f"- {label}: {_sentence(item.why_now or _why_it_matters(item))}",
                 f"- {use_label}: {_sentence(item.why_it_matters_for_bidmatrix or item.bidmatrix_angle or item.why_it_matters)}",
                 f"- Action: {_sentence(item.concrete_action or item.partner_or_sales_action or item.watch_next or 'No immediate action.').replace('  ', ' ')}",
-                f"- Source: [{item.source_title or item.title}]({item.source_url or item.url}) - {_source_label(item)} - Date: {item.published_date or 'unknown'} - confidence: {item.confidence}",
+                f"- Source: [{item.source_title or item.title}]({item.source_url or item.url}) - {_source_label(item)} - {_source_date_label(item)} - confidence: {item.confidence}",
                 "",
             ]
         )
@@ -161,7 +162,7 @@ def _background_context(report: MonitorReport) -> list[str]:
         if not text or text.lower() in seen:
             continue
         seen.add(text.lower())
-        date_label = item.published_date or "unknown"
+        date_label = _source_date_label(item).removeprefix("Date: ")
         values.append(
             f"- {text} Source: [{item.title}]({item.url}) | Date: {date_label}"
         )
@@ -221,12 +222,60 @@ def _source_label(item: NewsItem) -> str:
     return label
 
 
+def _source_date_label(item: NewsItem) -> str:
+    if not item.published_date:
+        return "Date: unknown"
+    published = _render_parse_date(item.published_date)
+    if published and (date.today() - published).days > 30:
+        return f"Date: {item.published_date} - older context"
+    return f"Date: {item.published_date}"
+
+
+def _render_parse_date(value: str | None) -> date | None:
+    if not value:
+        return None
+    text = value.strip()
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%m/%d/%Y", "%B %d, %Y", "%b %d, %Y"):
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
 def _event_line(item: NewsItem, entity: str) -> str:
     prefix = entity or item.topic_label
     event = _clean_text(item.summary or item.title)
     if entity and event.lower().startswith(entity.lower()):
         event = event[len(entity):].lstrip(" -,:")
+    raw_event = event.strip()
+    if raw_event.lower().startswith("and "):
+        match = re.match(r"and\s+([A-Z][A-Za-z0-9&.+\-]*(?:\s+[A-Z][A-Za-z0-9&.+\-]*){0,3})\s+(.*)", raw_event)
+        if match:
+            partner = match.group(1).strip()
+            remainder = _clean_leading_connector(match.group(2).strip())
+            joined_prefix = prefix
+            if partner.lower() not in prefix.lower():
+                joined_prefix = f"{prefix} x {partner}"
+            prefix = joined_prefix
+            event = remainder
+        else:
+            event = _clean_leading_connector(raw_event)
+    else:
+        event = _clean_leading_connector(raw_event)
     return f"{prefix} — {event}"
+
+
+def _clean_leading_connector(text: str) -> str:
+    cleaned = text.strip()
+    patterns = [
+        r"^(?:with|via|through)\s+",
+        r"^(?:and)\s+",
+    ]
+    for pattern in patterns:
+        cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"^(?:are|is)\s+", "", cleaned, flags=re.IGNORECASE)
+    return cleaned.strip(" -,:;")
 
 
 def _what_happened(item: NewsItem) -> str:

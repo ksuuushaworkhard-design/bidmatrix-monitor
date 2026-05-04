@@ -3,7 +3,7 @@ from typing import Optional, List
 
 from bidmatrix_monitor.intelligence import build_report, dedupe_items
 from bidmatrix_monitor.models import MonitorConfig, NewsItem, OutputSettings, SearchSettings, SourceConfig, Topic
-from bidmatrix_monitor.render import render_markdown
+from bidmatrix_monitor.render import render_markdown, _event_line
 from bidmatrix_monitor.weekly import render_weekly_markdown
 from bidmatrix_monitor.delivery import _telegram_message
 from bidmatrix_monitor.exa_client import ExaCollectionStats, ExaMonitorClient
@@ -373,10 +373,8 @@ Found 1 core signal worth attention today.
     """
     message = _telegram_message("BidMatrix Daily Market Brief - 2026-04-29", markdown, "daily")
     assert "Top market signal" in message
-    assert "What happened" in message
     assert "Why it matters" in message
     assert "BidMatrix angle" in message
-    assert "Content angle" in message
     assert "Action" in message
     assert "Source" in message
     assert "https://example.com/daivid" in message
@@ -2013,3 +2011,127 @@ def test_one_item_digest_reason_is_set_when_only_one_usable_item_exists() -> Non
     report = build_report([item], config)
     assert len(report.daily_digest_items) == 1
     assert report.diagnostics["one_item_digest_reason"]
+
+
+def test_actions_do_not_leak_between_digest_items() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="balanced", daily_digest_target=4),
+        topics=(Topic(id="mw", label="Market Watch", query="market watch"),),
+        sources=SourceConfig(high_signal_domains=("example.com",), background_priority_domains=("example.com",)),
+    )
+    items = [
+        _market_watch_candidate(
+            "Kochava expands Certified Partners Program",
+            "Kochava expanded its certified partner program and integration quality requirements.",
+            "Published 2026-04-29 as MMP and partner-quality workflows evolve.",
+            companies=["Kochava"],
+            days_old=5,
+        ),
+        _market_watch_candidate(
+            "TikTok recreates its ads for billboards via Vistar Media partnership",
+            "TikTok and Vistar Media are packaging DOOH creative and measurement workflows for cross-screen campaigns.",
+            "Published 2026-05-04 as cross-screen creative execution expands.",
+            companies=["TikTok", "Vistar Media"],
+            days_old=0,
+        ),
+        _market_watch_candidate(
+            "State of ad fraud 2026: marketer report insights",
+            "AppsFlyer released a fraud report covering fraud risk, channel quality, and verified traffic.",
+            "Published 2026-04-23 as app marketers face rising fraud pressure.",
+            companies=["AppsFlyer"],
+            days_old=11,
+        ),
+    ]
+    report = build_report(items, config)
+    by_title = {item.title: item for item in report.daily_digest_items}
+    assert "Kochava turns these certified integrations" in by_title["Kochava expands Certified Partners Program"].partner_or_sales_action
+    assert "TikTok connects DOOH inventory" in by_title["TikTok recreates its ads for billboards via Vistar Media partnership"].partner_or_sales_action
+    assert "fraud risk, channel quality, and verified traffic" in by_title["State of ad fraud 2026: marketer report insights"].partner_or_sales_action
+
+
+def test_tiktok_dooh_gets_cross_screen_angle_not_mmp_angle() -> None:
+    item = _market_watch_candidate(
+        "TikTok recreates its ads for billboards via Vistar Media partnership",
+        "TikTok and Vistar Media are packaging DOOH creative and measurement workflows for cross-screen campaigns.",
+        "Published 2026-05-04 as cross-screen creative execution expands.",
+        companies=["TikTok", "Vistar Media"],
+        days_old=0,
+    )
+    report = build_report([item], MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="balanced"),
+        topics=(Topic(id="mw", label="Market Watch", query="market watch"),),
+        sources=SourceConfig(high_signal_domains=("example.com",), fresh_priority_domains=("example.com",)),
+    ))
+    assert report.daily_digest_items[0].bidmatrix_angle == "Broad cross-screen context; relevant only if DOOH becomes measurable for app campaigns or retargeting."
+
+
+def test_older_than_30_days_is_penalized_vs_newer_relevant_candidate() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="balanced"),
+        topics=(Topic(id="mw", label="Market Watch", query="market watch"),),
+        sources=SourceConfig(high_signal_domains=("example.com",), background_priority_domains=("example.com",)),
+    )
+    older = _market_watch_candidate(
+        "Kochava expands Certified Partners Program",
+        "Kochava expanded its certified partner program and integration quality requirements.",
+        "Published 2026-03-03 as partner-quality workflows evolved.",
+        companies=["Kochava"],
+        days_old=62,
+    )
+    newer = _market_watch_candidate(
+        "AppsFlyer updates SKAN measurement workflow",
+        "AppsFlyer updated SKAN and attribution guidance for app marketers using Privacy Sandbox and MMP workflows.",
+        "Published 2026-04-26 as measurement teams adapt live attribution decisions.",
+        companies=["AppsFlyer"],
+        days_old=8,
+    )
+    report = build_report([older, newer], config)
+    assert report.daily_digest_items[0].title == newer.title
+
+
+def test_telegram_renders_max_three_items_even_if_artifact_has_four() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="balanced", daily_digest_target=4),
+        topics=(Topic(id="mw", label="Market Watch", query="market watch"),),
+        sources=SourceConfig(high_signal_domains=("example.com",), background_priority_domains=("example.com",)),
+    )
+    items = [
+        _market_watch_candidate("Kochava expands Certified Partners Program", "Kochava expanded its certified partner program and integration quality requirements.", "Published 2026-04-29 as MMP and partner-quality workflows evolve.", companies=["Kochava"], days_old=5),
+        _market_watch_candidate("TikTok recreates its ads for billboards via Vistar Media partnership", "TikTok and Vistar Media are packaging DOOH creative and measurement workflows for cross-screen campaigns.", "Published 2026-05-04 as cross-screen creative execution expands.", companies=["TikTok", "Vistar Media"], days_old=0),
+        _market_watch_candidate("State of ad fraud 2026: marketer report insights", "AppsFlyer released a fraud report covering fraud risk, channel quality, and verified traffic.", "Published 2026-04-23 as app marketers face rising fraud pressure.", companies=["AppsFlyer"], days_old=11),
+        _market_watch_candidate("Moloco performance CTV for app marketers", "Moloco launched performance CTV with MMP attribution and measurable ROI across streaming inventory.", "Published 2026-04-22 as app marketers push CTV toward measurable performance outcomes.", companies=["Moloco"], days_old=12),
+    ]
+    report = build_report(items, config)
+    assert len(report.daily_digest_items) == 4
+    markdown = render_markdown(report)
+    message = _telegram_message(f"BidMatrix Daily Market Brief - {report.run_date.isoformat()}", markdown, "daily")
+    assert "\n1. " in message and "\n2. " in message and "\n3. " in message
+    assert "\n4. " not in message
+    assert "More items saved in the full report artifact." in message
+    assert "[Truncated." not in message
+
+
+def test_event_line_rewrites_leading_and_partner_into_clean_joint_title() -> None:
+    item = NewsItem(
+        topic_id="mw",
+        topic_label="Market Watch",
+        title="TikTok recreates its ads for billboards via Vistar Media partnership",
+        url="https://digiday.com/marketing/tiktok-recreates-its-ads-for-billboards-through-vistar-partnership/",
+        summary="and Vistar Media are packaging DOOH creative and measurement workflows for cross-screen campaigns.",
+        company_or_topic="TikTok",
+    )
+    line = _event_line(item, "TikTok")
+    assert "TikTok — and Vistar Media" not in line
+    assert line.startswith("TikTok x Vistar Media — packaging")
