@@ -146,6 +146,26 @@ def _select_daily_content(
     strong_core = [item for item in core_curated if item.confidence in {"high", "medium"}]
     daily_signals = _recent_signals(strong_core, target)
     if daily_signals:
+        if len(daily_signals) < max(2, target - 1):
+            supplement_pool = [
+                item
+                for item in deduped
+                if item.normalized_url not in {signal.normalized_url for signal in daily_signals}
+                and item.relevance_tier == "core"
+                and item.confidence in {"high", "medium"}
+                and item.source_quality >= int(thresholds["background_min_source_quality"])
+                and item.final_score >= max(int(thresholds["curated_min_score"]) - 1, 6)
+                and _is_within_days(item, 14)
+            ]
+            broader_recent, market_watch_meta = _recent_market_watch_items(
+                supplement_pool,
+                thresholds,
+                target=max(2, target - len(daily_signals)),
+                max_days=14,
+            )
+            if broader_recent:
+                merged = _merge_digest_items(daily_signals, broader_recent, target)
+                return merged, [], "core_plus_market_watch", market_watch_meta
         if any(item.freshness_tier == "new_last_7d" and not _is_last_72h(item) for item in daily_signals):
             return daily_signals, [], "core_7d", {}
         if any(_is_last_72h(item) and item.freshness_tier != "new_last_24h" for item in daily_signals):
@@ -170,6 +190,7 @@ def _select_daily_content(
 
 def _recent_signals(items: list[NewsItem], target: int) -> list[NewsItem]:
     selected: list[NewsItem] = []
+    seen_buckets: set[str] = set()
     buckets = [
         _sort_daily_bucket([item for item in items if item.freshness_tier == 'new_last_24h']),
         _sort_daily_bucket([item for item in items if _is_last_72h(item) and item.freshness_tier != 'new_last_24h']),
@@ -177,15 +198,23 @@ def _recent_signals(items: list[NewsItem], target: int) -> list[NewsItem]:
     ]
     for bucket in buckets:
         for item in bucket:
-            if item.normalized_url not in {value.normalized_url for value in selected}:
-                selected.append(item)
+            item_bucket = _market_watch_bucket(item)
+            if item.normalized_url in {value.normalized_url for value in selected}:
+                continue
+            if item_bucket == "fraud_quality" and "fraud_quality" in seen_buckets:
+                if any(_market_watch_bucket(other) != "fraud_quality" for other in bucket if other.normalized_url != item.normalized_url):
+                    continue
+            if item_bucket in seen_buckets and len(selected) < max(2, target - 1):
+                continue
+            selected.append(item)
+            seen_buckets.add(item_bucket)
             if len(selected) >= target:
                 return selected
     return selected
 
 
 def _recent_market_watch_items(
-    items: list[NewsItem], thresholds: dict[str, int | str], target: int
+    items: list[NewsItem], thresholds: dict[str, int | str], target: int, max_days: int = 14
 ) -> tuple[list[NewsItem], dict[str, object]]:
     candidates = [
         item
@@ -194,7 +223,7 @@ def _recent_market_watch_items(
         and item.confidence in {"high", "medium"}
         and item.source_quality >= int(thresholds["background_min_source_quality"])
         and item.final_score >= max(int(thresholds["curated_min_score"]) - 1, 6)
-        and _is_last_14d(item)
+        and _is_within_days(item, max_days)
     ]
     unique_candidates = _unique_items(candidates)
     scored_candidates: list[tuple[int, str, NewsItem]] = []
@@ -253,6 +282,12 @@ def _daily_intro(
 ) -> str:
     count = len(daily_signals)
     if count:
+        if fallback_level_used == "core_plus_market_watch":
+            noun = "signal" if count == 1 else "signals"
+            return (
+                f"Found {count} BidMatrix-relevant {noun} worth attention, mixing fresh coverage "
+                "with the best recent market signals available."
+            )
         noun = 'signal' if count == 1 else 'signals'
         return f'Found {count} core {noun} worth attention today.'
     if adjacent_watchlist:
@@ -419,10 +454,17 @@ def _select_diverse_market_watch_items(
     selected: list[NewsItem] = []
     seen_urls: set[str] = set()
     seen_reasons: set[str] = set()
+    seen_buckets: set[str] = set()
     max_items = max(minimum, min(target, 5))
+    better_non_fraud_exists = any(_market_watch_bucket(item) != "fraud_quality" and priority >= 50 for priority, _, item in ranked)
 
     for _, reason, item in ranked:
         if item.normalized_url in seen_urls:
+            continue
+        bucket = _market_watch_bucket(item)
+        if bucket == "fraud_quality" and "fraud_quality" in seen_buckets and better_non_fraud_exists:
+            continue
+        if bucket in seen_buckets and len(selected) < minimum:
             continue
         if item.market_watch_priority_score <= 15 and len(selected) >= 3:
             continue
@@ -433,16 +475,21 @@ def _select_diverse_market_watch_items(
         selected.append(item)
         seen_urls.add(item.normalized_url)
         seen_reasons.add(reason)
+        seen_buckets.add(bucket)
         if len(selected) >= max_items:
             return selected
 
     for priority, _, item in ranked:
         if item.normalized_url in seen_urls:
             continue
+        bucket = _market_watch_bucket(item)
+        if bucket == "fraud_quality" and "fraud_quality" in seen_buckets and better_non_fraud_exists:
+            continue
         if priority <= 15 and len(selected) >= 3:
             continue
         selected.append(item)
         seen_urls.add(item.normalized_url)
+        seen_buckets.add(bucket)
         if len(selected) >= max_items:
             break
     return selected
@@ -450,6 +497,16 @@ def _select_diverse_market_watch_items(
 
 def _confidence_bonus(item: NewsItem) -> int:
     return {"high": 8, "medium": 4, "low": 0}.get(item.confidence, 0)
+
+
+def _merge_digest_items(primary: list[NewsItem], supplements: list[NewsItem], target: int) -> list[NewsItem]:
+    ranked: list[tuple[int, str, NewsItem]] = []
+    for item in primary + supplements:
+        if not item.market_watch_priority_score:
+            item.market_watch_priority_score, item.market_watch_reason = _market_watch_priority(item)
+        ranked.append((item.market_watch_priority_score + _confidence_bonus(item), item.market_watch_reason, item))
+    ranked.sort(key=lambda value: (-value[0], -value[2].final_score, -value[2].freshness_confidence, value[2].title.lower()))
+    return _select_diverse_market_watch_items(ranked, target, minimum=min(2, target))
 
 
 def _market_watch_priority(item: NewsItem) -> tuple[int, str]:
@@ -477,6 +534,28 @@ def _market_watch_priority(item: NewsItem) -> tuple[int, str]:
     return 20, "general_market_watch_priority"
 
 
+def _market_watch_bucket(item: NewsItem) -> str:
+    if _has_terms(item, "appsflyer", "adjust", "singular", "airbridge", "kochava", "branch", "mmp", "attribution", "skan", "privacy sandbox", "adattributionkit", "measurement partner", "conversion value", "postback", "incrementality", "mmm"):
+        return "measurement"
+    if _has_terms(item, "fraud", "invalid traffic", "ivt", "traffic quality", "brand safety", "viewability", "fraud detection"):
+        return "fraud_quality"
+    if _has_terms(item, "ctv", "connected tv", "performance ctv", "streaming inventory", "tv attribution"):
+        return "ctv"
+    if _has_terms(item, "programmatic", "in-app", "dsp", "ssp", "exchange", "inventory", "direct deals", "brand demand", "chartboost direct"):
+        return "programmatic_supply"
+    if _has_terms(item, "ai media buying", "campaign optimization", "media optimization", "creative intelligence", "creative effectiveness", "budget shifts", "agentic media buying", "agentic", "stationone ai"):
+        return "ai_campaign_ops"
+    if _has_terms(item, "mobile user acquisition", "user acquisition", "app growth", "performance marketing", "app marketers", "app advertisers", "mobile marketing"):
+        return "mobile_ua"
+    if _has_terms(item, "applovin", "moloco", "liftoff", "adjust", "appsflyer", "singular", "airbridge", "kochava", "branch", "tenjin", "braze", "clevertap", "apptweak", "unity", "index exchange"):
+        return "partner_competitor"
+    if _has_terms(item, "report", "benchmark", "index", "conference", "summit", "mau", "business of apps", "mobile marketing reads"):
+        return "report_conference"
+    if _has_terms(item, "overwolf", "gamer grid", "pc gaming", "gameplay", "hardware signals", "gamer", "gaming audience"):
+        return "gaming_adjacent"
+    return "general"
+
+
 def _score_item(item: NewsItem, config: MonitorConfig | None) -> NewsItem:
     explicit_date = _parse_date(item.published_date)
     inferred_date = explicit_date or _date_from_url(item.url)
@@ -494,6 +573,12 @@ def _score_item(item: NewsItem, config: MonitorConfig | None) -> NewsItem:
     freshness_tier = _freshness_tier(item)
     originality_score = _originality_score(item)
     _enrich_signal(item, config)
+    text_date = _parse_date(item.why_now) or _parse_date(item.summary) or _parse_date(item.title)
+    if text_date and (item.date_quality != "explicit_date" or item.published_date != text_date.isoformat()):
+        item.published_date = text_date.isoformat()
+        item.date_quality = "explicit_date"
+        item.freshness_confidence = _freshness_confidence(item)
+        freshness_tier = _freshness_tier(item)
     relevance = _relevance_score(item, config)
     entity_bonus = 0
 
@@ -552,6 +637,10 @@ def _score_item(item: NewsItem, config: MonitorConfig | None) -> NewsItem:
 
 
 def _enrich_signal(item: NewsItem, config: MonitorConfig | None = None) -> None:
+    if not item.published_date:
+        inferred = _parse_date(item.why_now) or _parse_date(item.summary) or _parse_date(item.title)
+        if inferred:
+            item.published_date = inferred.isoformat()
     item.signal_type = _normalized_signal_type(item)
     item.company_or_topic = _primary_company_or_topic(item) or item.company_or_topic or _lead_entity(item) or item.topic_label
     item.source_title = item.source_title or item.title
@@ -624,21 +713,29 @@ def _daily_digest_synthesis(items: list[NewsItem]) -> list[str]:
     if len(items) < 2:
         return []
 
-    reasons = {item.market_watch_reason for item in items if item.market_watch_reason}
+    buckets = {_market_watch_bucket(item) for item in items}
     sentences: list[str] = []
-    if any("measurement" in reason for reason in reasons) and any("ctv" in reason for reason in reasons):
+    if "measurement" in buckets and "ctv" in buckets:
         sentences.append(
             "Measurement changes and performance CTV signals both point to a market that wants clearer proof of outcomes, not just more reach."
         )
-    if any("ai" in reason for reason in reasons) and any("programmatic" in reason or "mobile_ua" in reason for reason in reasons):
+    if "ai_campaign_ops" in buckets and ({"programmatic_supply", "mobile_ua", "measurement"} & buckets):
         sentences.append(
             "Automation is moving deeper into media operations, but advertisers still need transparent supply, usable attribution, and human QA around performance."
         )
-    if any("programmatic" in reason for reason in reasons):
+    if "programmatic_supply" in buckets:
         sentences.append(
             "The common thread is that app inventory is being packaged with more emphasis on direct brand-demand paths, measurable quality, and stronger in-app monetization economics."
         )
-    if any("measurement" in reason for reason in reasons):
+    if "measurement" in buckets and "fraud_quality" in buckets:
+        sentences.append(
+            "Measurement and traffic quality are converging as core performance concerns: growth teams need better attribution workflows and cleaner supply, not just more reach."
+        )
+    if "ai_campaign_ops" in buckets and "fraud_quality" in buckets:
+        sentences.append(
+            "AI is appearing on both sides of the market — as an optimization layer and as a fraud risk — which makes verification and decision quality more important."
+        )
+    if not sentences and "measurement" in buckets:
         sentences.append(
             "Attribution resilience and privacy-safe optimization remain central to how growth teams decide where budget should move next."
         )
@@ -650,7 +747,11 @@ def _daily_digest_synthesis(items: list[NewsItem]) -> list[str]:
 
 
 def _bidmatrix_angles(items: list[NewsItem]) -> list[str]:
-    values = [item.why_it_matters_for_bidmatrix or item.bidmatrix_angle for item in items]
+    values = [
+        item.why_it_matters_for_bidmatrix or item.bidmatrix_angle
+        for item in items
+        if _market_watch_bucket(item) != "ctv" or any(_market_watch_bucket(value) == "ctv" for value in items)
+    ]
     return _unique_nonempty(values)[:5]
 
 
@@ -1063,18 +1164,24 @@ def _pr_angle(item: NewsItem) -> str:
 
 def _partner_or_sales_action(item: NewsItem) -> str:
     companies = ", ".join(item.mentioned_companies[:3])
+    if _has_terms(item, "appsflyer", "adjust", "singular", "airbridge", "kochava", "branch", "mmp", "attribution", "measurement", "skan", "privacy sandbox", "adattributionkit", "stationone ai", "iab workspace"):
+        return "Track whether Kochava expands StationOne AI beyond beta, publishes customer use cases, or connects it more directly to attribution and optimization workflows."
+    if _has_terms(item, "fraud", "invalid traffic", "ivt", "traffic quality", "brand safety", "viewability", "fraud detection"):
+        return "Use this as supporting context for BidMatrix traffic-quality messaging, especially around verified sources, IVT pressure, and AI-driven fraud risks."
+    if _has_terms(item, "moloco", "performance ctv", "mmp", "household", "roi", "installs"):
+        return "Watch whether Moloco publishes app-marketer case studies or MMP-attributed CTV outcomes that reinforce CTV as performance media."
     if _has_terms(item, "ias", "total tv", "connected tv", "ctv", "viewability", "device verification"):
         return "Use this in messaging about verified CTV environments, measurable premium inventory, and app-growth outcomes beyond impressions."
     if _has_terms(item, "doubleverify", "slopstopper", "ai-generated content", "brand suitability", "youtube"):
         return "Use this in content or sales messaging about traffic quality in AI-generated environments and why low-quality impressions hurt performance."
-    if _has_terms(item, "moloco", "performance ctv", "mmp", "household", "roi", "installs"):
-        return "Use this in positioning around CTV as a performance channel for app growth, not just an awareness buy."
     if _has_terms(item, "overwolf", "gamer grid", "gameplay", "hardware signals", "gamer"):
         return "Use this as a hook for outreach or content about gaming user acquisition moving toward higher-intent behavior segments."
+    if _has_terms(item, "omnicom", "agentic media buying", "agentic buying", "media buying agents", "agentic", "ai media buying", "campaign optimization", "media optimization"):
+        return "Use this as a POV hook for AI-native programmatic: automation can speed up buying, but advertisers still need transparent supply, attribution clarity, and performance safeguards."
     if _has_terms(item, "daivid", "adin.ai", "creative effectiveness", "creative intelligence", "budget shifts"):
         return "Track whether creative intelligence vendors start integrating more directly with media buying, MMPs, or campaign optimization platforms."
     if _has_terms(item, "chartboost direct", "brand demand", "direct deals", "marketplace", "publisher"):
-        return "Use this in partner or sales messaging about curated in-app supply, direct brand-demand paths, and better app monetization through ad demand."
+        return "Track whether this leads to advertiser case studies, curated marketplace adoption, or more direct brand-demand paths into app inventory."
     if companies:
         if _has_terms(item, "fraud", "quality", "brand safety", "invalid traffic"):
             return f"Use this signal in partner outreach or sales conversations about traffic quality with {companies}."
@@ -1174,7 +1281,7 @@ def _actors_from_text(text: str) -> list[str]:
     partnership = re.match(r"([A-Z][A-Za-z0-9.&+\-]*(?:\s+[A-Z][A-Za-z0-9.&+\-]*){0,2})\s+(?:partnered with|partners with|announced a partnership with|integrated with)\s+([A-Z][A-Za-z0-9.&+\-]*(?:\s+[A-Z][A-Za-z0-9.&+\-]*){0,2})", source)
     if partnership:
         return [partnership.group(1).strip(), partnership.group(2).strip()]
-    launched = re.match(r"([A-Z][A-Za-z0-9.&+\-]*(?:\s+[A-Z][A-Za-z0-9.&+\-]*){0,3})\s+(?:launched|announced|introduced|released)", source)
+    launched = re.match(r"([A-Z][A-Za-z0-9.&+\-]*(?:\s+[A-Z][A-Za-z0-9.&+\-]*){0,3})\s+(?:launched|announced|introduced|released|published)\b", source)
     if launched:
         return [launched.group(1).strip()]
     return []
@@ -1205,10 +1312,16 @@ def _is_last_14d(item: NewsItem) -> bool:
     return published >= date.today() - timedelta(days=14)
 
 
+def _is_within_days(item: NewsItem, days: int) -> bool:
+    published = _parse_date(item.published_date) or _date_from_url(item.url)
+    if not published:
+        return False
+    return published >= date.today() - timedelta(days=days)
+
+
 def _sentence_cleanup(text: str) -> str:
     cleaned = " ".join(str(text).split()).strip(" ;")
     replacements = {
-        "Use this as": "",
         "Explain what": "",
         "Leverage BidMatrix intelligence to": "",
         "Position BidMatrix as": "",
@@ -1266,6 +1379,10 @@ def _best_why_now(item: NewsItem) -> str:
             "This shows creative intelligence moving from post-campaign reporting into active media decisioning. For performance teams, the shift is not just generating more creative assets, but using creative quality signals to decide what deserves spend."
         )
     if item.why_now:
+        if not item.published_date:
+            inferred = _parse_date(item.why_now)
+            if inferred:
+                item.published_date = inferred.isoformat()
         return _sentence_cleanup(item.why_now)
     if item.date_quality == "explicit_date" and item.freshness_tier == "new_last_24h":
         return _sentence_cleanup("This is newly published and relevant to current mobile growth decisions.")
@@ -1344,13 +1461,15 @@ def _best_watch_next(item: NewsItem) -> str:
         return _sentence_cleanup("Track whether creative intelligence vendors start integrating more directly with media buying, MMPs, or optimization platforms.")
     if item.watch_next:
         return _sentence_cleanup(item.watch_next)
-    companies = ", ".join(item.mentioned_companies[:3]) or item.company_or_topic
+    companies = _selected_entity_names(item)
     if _has_terms(item, "ias", "total tv", "connected tv", "ctv", "viewability", "device verification"):
         return _sentence_cleanup("Track whether CTV sellers, DSPs, or measurement partners start using the same transparency and verification language.")
     if _has_terms(item, "doubleverify", "slopstopper", "ai-generated content", "brand suitability", "youtube"):
         return _sentence_cleanup("Track whether Meta, YouTube, TikTok, or rival verification vendors launch similar AI-content quality filters.")
     if _has_terms(item, "moloco", "performance ctv", "mmp", "household", "roi", "installs"):
         return _sentence_cleanup("Track whether MMPs, DSPs, or CTV networks start promising install or revenue outcomes with similar measurement language.")
+    if _has_terms(item, "fraud", "invalid traffic", "ivt", "traffic quality", "brand safety", "viewability", "fraud detection"):
+        return _sentence_cleanup("Track whether Q2 fraud reports show AI-driven IVT increasing or stabilizing, and whether fraud vendors start packaging AI fraud detection as a default layer for app growth teams.")
     if _has_terms(item, "overwolf", "gamer grid", "gameplay", "hardware signals", "gamer"):
         return _sentence_cleanup("Track whether gaming ad networks or MMPs start packaging similar deterministic audience-quality segments.")
     if _has_terms(item, "daivid", "adin.ai", "creative effectiveness", "creative intelligence", "budget shifts"):
@@ -1360,10 +1479,31 @@ def _best_watch_next(item: NewsItem) -> str:
     if item.signal_type == "privacy_measurement":
         return _sentence_cleanup(f"Track whether {companies} publish follow-up SDK, postback, or implementation guidance.")
     if item.signal_type == "fraud_quality":
-        return _sentence_cleanup(f"Track whether {companies} or peers start using similar traffic-quality or verification language.")
+        return _sentence_cleanup("Track whether fraud vendors start using similar traffic-quality or verification language across app growth campaigns.")
     if item.signal_type == "product_launch":
         return _sentence_cleanup(f"Track whether {companies} announce integrations, demand partners, or advertiser case studies next.")
     return _sentence_cleanup(f"Track whether {companies} turn this into a broader product, partner, or messaging push.")
+
+
+def _selected_entity_names(item: NewsItem) -> str:
+    values: list[str] = []
+    primary = _primary_company_or_topic(item)
+    if primary:
+        values.extend(part.strip() for part in primary.replace(" x ", ",").split(",") if part.strip())
+    for company in item.mentioned_companies:
+        if company and company not in values and not _is_secondary_entity(company, item):
+            values.append(company)
+    return ", ".join(values[:3]) or item.company_or_topic
+
+
+def _is_secondary_entity(name: str, item: NewsItem) -> bool:
+    lowered = name.lower()
+    text = _item_text(item)
+    if lowered in {"amazon", "aws"} and "fraud" in text:
+        return True
+    if "client" in text and lowered not in (item.company_or_topic or "").lower():
+        return True
+    return False
 
 
 def _confidence_label(item: NewsItem, pre_final_score: int) -> str:

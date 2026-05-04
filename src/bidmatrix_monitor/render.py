@@ -146,6 +146,7 @@ def _digest_signal_cards(items: list[NewsItem], market_watch: bool = False) -> l
                 f"- What happened: {_sentence(item.what_happened or _what_happened(item))}",
                 f"- {label}: {_sentence(item.why_now or _why_it_matters(item))}",
                 f"- {use_label}: {_sentence(item.why_it_matters_for_bidmatrix or item.bidmatrix_angle or item.why_it_matters)}",
+                f"- Action: {_sentence(item.concrete_action or item.partner_or_sales_action or item.watch_next or 'No immediate action.').replace('  ', ' ')}",
                 f"- Source: [{item.source_title or item.title}]({item.source_url or item.url}) - {_source_label(item)} - Date: {item.published_date or 'unknown'} - confidence: {item.confidence}",
                 "",
             ]

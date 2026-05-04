@@ -85,8 +85,7 @@ def _telegram_message(subject: str, text: str, report_type: str) -> str:
     lines = [title]
 
     if top_items and intro.lower().startswith("found "):
-        noun = 'signal' if len(top_items) == 1 else 'signals'
-        lines.extend(["", "<b>Today's useful signals</b>", html.escape(f'Found {len(top_items)} core {noun} worth attention today.')])
+        lines.extend(["", "<b>Today's useful signals</b>", html.escape(_shorten(_sync_intro_count(intro, len(top_items)), 220))])
         lines.extend(['', '<b>Top market signal</b>' if len(top_items) == 1 else '<b>Top market signals</b>'])
         for index, item in enumerate(top_items[:3], start=1):
             lines.extend(_telegram_item(item, index))
@@ -406,6 +405,17 @@ def _shorten(text: str, max_chars: int) -> str:
     return _clean_trailing_fragment(cut)
 
 
+def _sync_intro_count(intro: str, count: int) -> str:
+    noun = "signal" if count == 1 else "signals"
+    updated = re.sub(r"^Found\s+\d+\s+", f"Found {count} ", intro, count=1)
+    updated = re.sub(r"\bsignal\(s\)\b", noun, updated)
+    if count == 1:
+        updated = re.sub(r"\bsignals\b", "signal", updated, count=1)
+    else:
+        updated = re.sub(r"\bsignal\b", "signals", updated, count=1)
+    return updated
+
+
 def _source_name(item: dict[str, str]) -> str:
     return item.get("source") or item.get("url") or "source"
 
@@ -455,7 +465,6 @@ def _polish_sentence(text: str) -> str:
         (r"^Frame BidMatrix as\s+", "BidMatrix can position around "),
         (r"^Position BidMatrix as\s+", "BidMatrix can position around "),
         (r"^Use this as a sales or partner conversation starter with\s+", "Discuss with "),
-        (r"^Use this as\s+", ""),
         (r"^A sales or partner conversation starter with\s+", "Discuss with "),
         (r"^Share\s+", ""),
         (r"^Sponsor or attend\s+", "Attend "),

@@ -124,8 +124,9 @@ def test_build_report_keeps_daily_top_signals_recent_only() -> None:
 
     report = build_report([fresh, background_one, background_two], config)
 
-    assert len(report.daily_signals) == 1
-    assert report.daily_signals[0].title == fresh.title
+    assert len(report.daily_signals) >= 1
+    assert report.diagnostics["fallback_level_used"] == "core_plus_market_watch"
+    assert len(report.daily_digest_items) >= 2
     assert report.daily_intro
 
 
@@ -1416,6 +1417,258 @@ def test_overwolf_not_selected_when_three_stronger_market_watch_candidates_exist
     report = build_report(items, config)
     titles = [item.title for item in report.daily_digest_items]
     assert all("Overwolf" not in title for title in titles)
+
+
+def test_only_one_fraud_item_selected_when_other_buckets_exist() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="balanced", daily_digest_target=4),
+        topics=(Topic(id="mw", label="Market Watch", query="market watch"),),
+        sources=SourceConfig(high_signal_domains=("example.com",), fresh_priority_domains=("example.com",)),
+    )
+    items = [
+        _market_watch_candidate(
+            "Fraudlogix Q1 2026 Ad Fraud Report",
+            "Fraudlogix published Q1 2026 ad fraud stats with invalid traffic and geo risk insights.",
+            "Traffic quality controls matter immediately for campaign performance protection.",
+            companies=["Fraudlogix"],
+        ),
+        _market_watch_candidate(
+            "Mobile ad fraud in the age of AI",
+            "Business of Apps insight details AI-evolved mobile fraud, polluted funnels, and retargeting contamination.",
+            "AI fraud is becoming a more practical performance risk for app growth teams.",
+            companies=["Business of Apps"],
+        ),
+        _market_watch_candidate(
+            "Unity and Index Exchange expand in-app inventory access",
+            "Unity partnered with Index Exchange to activate gaming audience and app inventory signals across programmatic channels.",
+            "Programmatic app inventory is being packaged with more first-party data and direct demand paths.",
+            companies=["Unity", "Index Exchange"],
+        ),
+    ]
+    report = build_report(items, config)
+    fraud_titles = [item.title for item in report.daily_digest_items if "fraud" in item.title.lower()]
+    assert len(fraud_titles) == 1
+    assert any("Unity" in item.title for item in report.daily_digest_items)
+
+
+def test_synthesis_does_not_include_ctv_angle_without_ctv_selected_item() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="balanced", daily_digest_target=4),
+        topics=(Topic(id="mw", label="Market Watch", query="market watch"),),
+        sources=SourceConfig(high_signal_domains=("example.com",), fresh_priority_domains=("example.com",)),
+    )
+    items = [
+        _market_watch_candidate(
+            "Kochava Q1 2026 Product Bulletin",
+            "Kochava published product and measurement updates including partner integrations and workspace changes.",
+            "Attribution workflows and measurement infrastructure are evolving.",
+            companies=["Kochava"],
+        ),
+        _market_watch_candidate(
+            "Fraudlogix Q1 2026 Ad Fraud Report",
+            "Fraudlogix published Q1 2026 ad fraud stats with invalid traffic and geo risk insights.",
+            "Traffic quality controls matter immediately for campaign performance protection.",
+            companies=["Fraudlogix"],
+        ),
+    ]
+    report = build_report(items, config)
+    joined = " ".join(report.bidmatrix_angles + report.what_this_suggests)
+    assert "transparent ctv" not in joined.lower()
+
+
+def test_watch_next_does_not_include_unselected_entities() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="balanced", daily_digest_target=4),
+        topics=(Topic(id="mw", label="Market Watch", query="market watch"),),
+        sources=SourceConfig(high_signal_domains=("example.com",), fresh_priority_domains=("example.com",)),
+    )
+    item = _market_watch_candidate(
+        "Fraudlogix Q1 2026 Ad Fraud Report",
+        "Fraudlogix published Q1 2026 ad fraud stats from 26.3B impressions, with AWS and high-risk geo patterns.",
+        "Published 2026-04-29 amid rising AI fraud sophistication.",
+        companies=["Amazon", "Fraudlogix"],
+    )
+    report = build_report([item], config)
+    assert "Amazon" not in report.watch_next_items[0]
+
+
+def test_date_from_metadata_or_text_is_used_in_source() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="balanced"),
+        topics=(Topic(id="mw", label="Market Watch", query="market watch"),),
+        sources=SourceConfig(high_signal_domains=("example.com",), fresh_priority_domains=("example.com",)),
+    )
+    item = _market_watch_candidate(
+        "Fraudlogix Q1 2026 Ad Fraud Report",
+        "Fraudlogix published Q1 2026 ad fraud stats with invalid traffic and geo risk insights.",
+        "Published 2026-04-29 amid rising AI fraud sophistication.",
+        companies=["Fraudlogix"],
+        days_old=30,
+    )
+    item.published_date = None
+    report = build_report([item], config)
+    markdown = render_markdown(report)
+    assert "Date: 2026-04-29" in markdown
+
+
+def test_digest_synthesis_reflects_selected_topic_buckets() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="balanced", daily_digest_target=4),
+        topics=(Topic(id="mw", label="Market Watch", query="market watch"),),
+        sources=SourceConfig(high_signal_domains=("example.com",), fresh_priority_domains=("example.com",)),
+    )
+    items = [
+        _market_watch_candidate(
+            "Kochava Q1 2026 Product Bulletin",
+            "Kochava published product and measurement updates including partner integrations and workspace changes.",
+            "Attribution workflows and measurement infrastructure are evolving.",
+            companies=["Kochava"],
+        ),
+        _market_watch_candidate(
+            "Fraudlogix Q1 2026 Ad Fraud Report",
+            "Fraudlogix published Q1 2026 ad fraud stats with invalid traffic and geo risk insights.",
+            "Traffic quality controls matter immediately for campaign performance protection.",
+            companies=["Fraudlogix"],
+        ),
+        _market_watch_candidate(
+            "Omnicom rolls out agentic media buying workflow",
+            "Omnicom rolled out AI media buying and campaign optimization workflows for live media operations.",
+            "AI campaign operations are moving into live media buying decisions.",
+            companies=["Omnicom"],
+        ),
+    ]
+    report = build_report(items, config)
+    joined = " ".join(report.what_this_suggests)
+    assert "Measurement and traffic quality are converging" in joined
+    assert "AI is appearing on both sides of the market" in joined
+
+
+def test_recent_core_selection_avoids_duplicate_fraud_when_other_bucket_exists() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="balanced", daily_digest_target=4),
+        topics=(Topic(id="mw", label="Market Watch", query="market watch"),),
+        sources=SourceConfig(high_signal_domains=("example.com",), fresh_priority_domains=("example.com",)),
+    )
+    items = [
+        NewsItem(
+            topic_id="mw",
+            topic_label="Market Watch",
+            title="Fraudlogix Q1 2026 Ad Fraud Report",
+            url="https://example.com/fraudlogix",
+            published_date=(date.today() - timedelta(days=2)).isoformat(),
+            summary="Fraudlogix published ad fraud stats with IVT and geo risk findings.",
+            why_now="Traffic quality controls matter immediately.",
+            mentioned_companies=["Fraudlogix"],
+            relevance_score=5,
+        ),
+        NewsItem(
+            topic_id="mw",
+            topic_label="Market Watch",
+            title="Mobile ad fraud in the age of AI",
+            url="https://example.com/boa-fraud",
+            published_date=(date.today() - timedelta(days=2)).isoformat(),
+            summary="Business of Apps published an AI-era fraud overview for mobile marketers.",
+            why_now="AI fraud is becoming a more practical performance risk.",
+            mentioned_companies=["Business of Apps"],
+            relevance_score=5,
+        ),
+        NewsItem(
+            topic_id="mw",
+            topic_label="Market Watch",
+            title="Unity and Index Exchange expand in-app inventory access",
+            url="https://example.com/unity-index",
+            published_date=(date.today() - timedelta(days=2)).isoformat(),
+            summary="Unity partnered with Index Exchange to activate app inventory and first-party audience signals across programmatic channels.",
+            why_now="Programmatic app inventory is being packaged with more first-party data and direct demand paths.",
+            mentioned_companies=["Unity", "Index Exchange"],
+            relevance_score=5,
+        ),
+    ]
+    report = build_report(items, config)
+    titles = [item.title for item in report.daily_digest_items]
+    assert sum("fraud" in title.lower() for title in titles) == 1
+    assert any("Unity" in title for title in titles)
+
+
+def test_single_fresh_core_signal_is_supplemented_by_recent_digest_items() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="balanced", daily_digest_target=4),
+        topics=(Topic(id="mw", label="Market Watch", query="market watch"),),
+        sources=SourceConfig(high_signal_domains=("example.com",), fresh_priority_domains=("example.com",)),
+    )
+    items = [
+        NewsItem(
+            topic_id="mw",
+            topic_label="Market Watch",
+            title="Fraudlogix Q1 2026 Ad Fraud Report",
+            url="https://example.com/fraudlogix",
+            published_date=(date.today() - timedelta(days=2)).isoformat(),
+            summary="Fraudlogix published ad fraud stats with IVT and geo risk findings.",
+            why_now="Published 2026-04-29 amid rising AI fraud sophistication.",
+            mentioned_companies=["Fraudlogix"],
+            relevance_score=5,
+        ),
+        _market_watch_candidate(
+            "Unity and Index Exchange expand in-app inventory access",
+            "Unity partnered with Index Exchange to activate app inventory and first-party audience signals across programmatic channels.",
+            "Published 2026-04-27 as publishers look for stronger cross-channel supply and demand paths.",
+            companies=["Unity", "Index Exchange"],
+            days_old=6,
+        ),
+        _market_watch_candidate(
+            "Moloco launches performance CTV for app marketers",
+            "Moloco launched performance CTV with connected TV campaign optimization, install outcomes, and measurable ROI across streaming inventory.",
+            "Published 2026-04-22 as app marketers push CTV toward measurable performance outcomes.",
+            companies=["Moloco"],
+        ),
+    ]
+    report = build_report(items, config)
+    assert len(report.daily_digest_items) >= 2
+    assert report.diagnostics["fallback_level_used"] == "core_plus_market_watch"
+
+
+def test_primary_actor_prefers_publisher_over_secondary_entity() -> None:
+    item = NewsItem(
+        topic_id="mw",
+        topic_label="Market Watch",
+        title="Fraudlogix Q1 2026 Ad Fraud Report",
+        url="https://example.com/fraudlogix",
+        summary="Fraudlogix published Q1 2026 ad fraud stats from 26.3B impressions.",
+        why_now="Published 2026-04-29 amid rising AI fraud sophistication.",
+        mentioned_companies=["Amazon", "Fraudlogix"],
+        relevance_score=5,
+    )
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="balanced"),
+        topics=(Topic(id="mw", label="Market Watch", query="market watch"),),
+        sources=SourceConfig(high_signal_domains=("example.com",), fresh_priority_domains=("example.com",)),
+    )
+    report = build_report([item], config)
+    assert report.daily_digest_items[0].company_or_topic == "Fraudlogix"
 
 
 def test_digest_synthesis_appears_when_multiple_items_selected() -> None:
