@@ -1892,3 +1892,124 @@ def test_digest_synthesis_appears_when_digest_is_supplemented() -> None:
     assert report.what_this_suggests
     assert report.bidmatrix_angles
     assert report.watch_next_items
+
+
+def test_market_watch_path_supplements_bedrock_with_background_context() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="balanced", daily_digest_target=4),
+        topics=(Topic(id="mw", label="Market Watch", query="market watch"),),
+        sources=SourceConfig(
+            high_signal_domains=("exchangewire.com", "moloco.com", "adweek.com"),
+            fresh_priority_domains=("exchangewire.com",),
+            background_priority_domains=("moloco.com", "adweek.com"),
+        ),
+    )
+    items = [
+        NewsItem(
+            topic_id="mw",
+            topic_label="Market Watch",
+            title="Bedrock Debuts Containerised DSP Deployment on Index Cloud, Enabling Model-Driven Bidding at Scale",
+            url="https://www.exchangewire.com/blog/2026/04/24/bedrock-debuts-containerised-dsp-deployment-on-index-cloud-enabling-model-driven-bidding-at-scale/",
+            published_date=(date.today() - timedelta(days=10)).isoformat(),
+            summary="Bedrock Platform launched a containerized DSP bidder on Index Cloud for model-driven bidding at scale.",
+            why_now="Announced April 2026 as programmatic shifts toward AI-driven decisioning.",
+            mentioned_companies=["Bedrock Platform", "Index Exchange"],
+            relevance_score=5,
+        ),
+        NewsItem(
+            topic_id="mw",
+            topic_label="Market Watch",
+            title="Moloco Launches AI-Powered Performance CTV for App Marketers, Bringing Mobile-Grade Measurement and Optimization to the Living Room",
+            url="https://www.moloco.com/press-releases/ai-powered-performance-ctv",
+            published_date=(date.today() - timedelta(days=18)).isoformat(),
+            summary="Moloco launched Performance CTV with mobile AI optimization and MMP attribution.",
+            why_now="Launched April 2026 as app marketers push CTV toward measurable performance outcomes.",
+            mentioned_companies=["Moloco"],
+            relevance_score=5,
+        ),
+        NewsItem(
+            topic_id="mw",
+            topic_label="Market Watch",
+            title="LoopMe Launches Chartboost Direct, Bringing Brands into Mobile Apps",
+            url="https://www.adweek.com/adweek-wire/loopme-launches-chartboost-direct-bringing-brands-into-mobile-apps/",
+            published_date=(date.today() - timedelta(days=24)).isoformat(),
+            summary="LoopMe launched Chartboost Direct SDK to open more direct brand-demand paths into app inventory.",
+            why_now="Published April 2026 as brand budgets move deeper into curated in-app supply.",
+            mentioned_companies=["LoopMe", "Chartboost"],
+            relevance_score=5,
+        ),
+    ]
+    report = build_report(items, config)
+    titles = [item.title for item in report.daily_digest_items]
+    assert len(titles) == 3
+    assert any("Bedrock" in title for title in titles)
+    assert any("Moloco" in title for title in titles)
+    assert any("LoopMe" in title for title in titles)
+    assert report.diagnostics["candidate_pool_sizes"]["background"] >= 2
+    assert report.diagnostics["supplemental_items_count"] == 2
+    assert report.diagnostics["selected_digest_items_count"] == 3
+
+
+def test_market_watch_best_available_supplements_to_three_items() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="balanced", daily_digest_target=4),
+        topics=(Topic(id="mw", label="Market Watch", query="market watch"),),
+        sources=SourceConfig(high_signal_domains=("example.com",), background_priority_domains=("example.com",)),
+    )
+    items = [
+        _market_watch_candidate(
+            "Bedrock containerized DSP deployment",
+            "Bedrock launched a containerized DSP deployment for model-driven bidding.",
+            "Published 2026-04-20 as automated ad buying infrastructure evolves.",
+            companies=["Bedrock Platform"],
+            days_old=14,
+        ),
+        _market_watch_candidate(
+            "Unity and Index Exchange expand in-app inventory access",
+            "Unity partnered with Index Exchange to activate app inventory and first-party audience signals across automated ad buying channels.",
+            "Published 2026-04-18 as publishers look for stronger supply and demand paths.",
+            companies=["Unity", "Index Exchange"],
+            days_old=16,
+        ),
+        _market_watch_candidate(
+            "AppsFlyer updates SKAN measurement workflow",
+            "AppsFlyer updated SKAN and attribution guidance for app marketers using Privacy Sandbox and MMP workflows.",
+            "Published 2026-04-17 as measurement teams adapt live attribution decisions.",
+            companies=["AppsFlyer"],
+            days_old=17,
+        ),
+    ]
+    report = build_report(items, config)
+    assert len(report.daily_digest_items) == 3
+    assert report.diagnostics["selected_digest_items_count"] == 3
+
+
+def test_one_item_digest_reason_is_set_when_only_one_usable_item_exists() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="balanced", daily_digest_target=4),
+        topics=(Topic(id="mw", label="Market Watch", query="market watch"),),
+        sources=SourceConfig(high_signal_domains=("example.com",), fresh_priority_domains=("example.com",)),
+    )
+    item = NewsItem(
+        topic_id="mw",
+        topic_label="Market Watch",
+        title="Single usable DSP infrastructure signal",
+        url="https://example.com/single-dsp-signal",
+        published_date=(date.today() - timedelta(days=9)).isoformat(),
+        summary="A single usable DSP infrastructure update remains available.",
+        why_now="Published 2026-04-25 as automated ad buying infrastructure evolves.",
+        mentioned_companies=["SingleDSP"],
+        relevance_score=5,
+    )
+    report = build_report([item], config)
+    assert len(report.daily_digest_items) == 1
+    assert report.diagnostics["one_item_digest_reason"]
