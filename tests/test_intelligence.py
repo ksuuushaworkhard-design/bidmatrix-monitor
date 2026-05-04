@@ -149,7 +149,8 @@ def test_build_report_skips_when_no_usable_signals_exist() -> None:
     report = build_report([item], config)
 
     assert report.daily_signals == []
-    assert report.daily_intro == "No fresh high-confidence signals found today. Here are useful background items worth tracking."
+    assert "no usable market signals passed the relevance filters" in report.daily_intro
+    assert report.diagnostics["telegram_message_state"] == "filtered_empty"
 
 
 def test_old_background_items_do_not_appear_as_daily_top_signals() -> None:
@@ -179,8 +180,7 @@ def test_old_background_items_do_not_appear_as_daily_top_signals() -> None:
 
     assert report.daily_signals == []
     assert "## Top Signals" not in markdown
-    assert "## Strategic Context" in markdown
-    assert "Background context, not a fresh daily signal." in markdown
+    assert "## Strategic Context" not in markdown
     assert "## Diagnostic Summary" not in markdown
 
 
@@ -276,8 +276,8 @@ def test_primary_actor_prefers_announcing_companies_over_client_example() -> Non
         topics=(Topic(id="ai", label="AI", query="ai"),),
         sources=SourceConfig(high_signal_domains=("example.com",)),
     )
-    report = build_report([item], config)
-    assert report.daily_signals[0].company_or_topic == "DAIVID x ADIN.AI"
+    scored = dedupe_items([item], config)[0]
+    assert scored.company_or_topic == "DAIVID x ADIN.AI"
 
 
 def test_market_context_does_not_repeat_what_happened() -> None:
@@ -368,8 +368,6 @@ Today's brief uses the best relevant signals from the last 72 hours.
 - Watch next: Track whether creative intelligence vendors integrate more directly with media buying platforms.
 - Source: [DAIVID & ADIN.AI Partner](https://example.com/daivid) - exchangewire.com (high-signal) - confidence: high
 
-## Strategic Context
-- No useful background context was kept.
 """
     message = _telegram_message("BidMatrix Daily Market Brief - 2026-04-29", markdown, "daily")
     assert "Top signal" in message
@@ -467,8 +465,8 @@ def test_no_core_signals_message_includes_adjacent_watchlist() -> None:
     report = build_report([adjacent], config)
     markdown = render_markdown(report)
     message = _telegram_message("BidMatrix Daily Market Brief - 2026-04-29", markdown, "daily")
-    assert "No core BidMatrix-relevant signals found today." in message
-    assert "Adjacent watchlist" in message
+    assert "No direct core BidMatrix signal dominated today" in message
+    assert "Market Watch" in message
     assert "Overwolf Ads" in message
     assert "indirect" in message.lower()
 
@@ -615,6 +613,139 @@ Found 1 core signal worth attention today.
 """
     message = _telegram_message('BidMatrix Daily Market Brief - 2026-04-29', markdown, 'daily')
     assert '<b>Strategic context</b>' not in message
+
+
+def test_no_raw_results_uses_exa_unavailable_message() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5),
+        topics=(Topic(id="a", label="Adtech", query="adtech"),),
+    )
+    report = build_report([], config)
+    assert "no Exa results were available" in report.daily_intro
+    assert report.diagnostics["telegram_message_state"] == "error"
+
+
+def test_exa_zero_results_telegram_uses_monitor_error() -> None:
+    markdown = """# BidMatrix Daily Brief - 2026-05-03
+
+## Today's Useful Signals
+Market brief monitor ran, but no Exa results were available. Please check EXA_API_KEY, Exa response logs, or source/query configuration.
+"""
+    message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-03", markdown, "daily")
+    assert "<b>Monitor error</b>" in message
+    assert "no Exa results were available" in message
+
+
+def test_exa_failure_path_records_errors() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5),
+        topics=(Topic(id="a", label="Adtech", query="adtech"),),
+    )
+    report = build_report([], config, exa_errors=["Mobile UA: timeout"])
+    assert "no Exa results were available" in report.daily_intro
+    assert report.exa_errors == ["Mobile UA: timeout"]
+    assert report.diagnostics["exa_errors"] == ["Mobile UA: timeout"]
+
+
+def test_adjacent_only_signals_render_watchlist_without_strategic_context() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="broad"),
+        topics=(Topic(id="gaming", label="Gaming", query="gaming"),),
+        sources=SourceConfig(high_signal_domains=("example.com",), fresh_priority_domains=("example.com",)),
+    )
+    adjacent = NewsItem(
+        topic_id="gaming",
+        topic_label="Gaming",
+        title="Overwolf Ads launched Gamer Grid",
+        url="https://example.com/2026/04/29/overwolf-gamer-grid",
+        published_date=date.today().isoformat(),
+        summary="Overwolf Ads launched Gamer Grid using deterministic gameplay behavior and hardware signals for PC gaming audience targeting.",
+        why_it_matters="Behavior-based audience products are becoming more specific, but this remains PC-gaming focused and only indirectly relevant to BidMatrix.",
+        mentioned_companies=["Overwolf Ads"],
+        relevance_score=5,
+    )
+    report = build_report([adjacent], config)
+    markdown = render_markdown(report)
+    assert "## Market Watch" in markdown
+    assert "## Strategic Context" not in markdown
+    assert report.diagnostics["fallback_level_used"] == "market_watch_7d"
+
+
+def test_telegram_adjacent_only_case_uses_no_core_message() -> None:
+    markdown = """# BidMatrix Daily Brief - 2026-05-03
+
+## Today's Useful Signals
+No direct core BidMatrix signal dominated today, so this brief uses the strongest adjacent industry signals worth monitoring.
+
+## Market Watch
+### 1. Overwolf Ads — launched Gamer Grid using deterministic gameplay behavior and hardware signals for PC gaming audience targeting
+- Why it may matter: Behavior-based audience products are becoming more specific, but this remains PC-gaming focused and only indirectly relevant to BidMatrix.
+- BidMatrix use: Relevance to BidMatrix is indirect; keep as watchlist only.
+- Source: [Overwolf Ads launched Gamer Grid](https://example.com/overwolf) - exchangewire.com (high-signal) - Date: 2026-05-03
+"""
+    message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-03", markdown, "daily")
+    assert "<b>Market Watch</b>" in message
+    assert "Overwolf Ads" in message
+    assert "<b>Strategic context</b>" not in message
+
+
+def test_no_24h_data_uses_last_72h_core_signal() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="broad"),
+        topics=(Topic(id="m", label="Measurement", query="measurement"),),
+        sources=SourceConfig(high_signal_domains=("example.com",), fresh_priority_domains=("example.com",)),
+    )
+    item = NewsItem(
+        topic_id="m",
+        topic_label="Measurement",
+        title="AppsFlyer updates attribution windows",
+        url="https://example.com/2026/05/02/appsflyer-update",
+        published_date=(date.today() - timedelta(days=2)).isoformat(),
+        summary="AppsFlyer updated attribution windows for mobile app marketers.",
+        why_it_matters="It changes live measurement decisions for app marketers.",
+        mentioned_companies=["AppsFlyer"],
+        relevance_score=5,
+    )
+    report = build_report([item], config)
+    assert len(report.daily_signals) == 1
+    assert report.diagnostics["fallback_level_used"] == "core_72h"
+
+
+def test_no_72h_data_uses_last_7d_core_signal() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="broad"),
+        topics=(Topic(id="m", label="Measurement", query="measurement"),),
+        sources=SourceConfig(high_signal_domains=("example.com",), fresh_priority_domains=("example.com",)),
+    )
+    item = NewsItem(
+        topic_id="m",
+        topic_label="Measurement",
+        title="Adjust launches measurement update",
+        url="https://example.com/2026/04/29/adjust-update",
+        published_date=(date.today() - timedelta(days=6)).isoformat(),
+        summary="Adjust launched a measurement update for mobile growth teams.",
+        why_it_matters="It changes measurement workflows for app marketers.",
+        mentioned_companies=["Adjust"],
+        relevance_score=5,
+    )
+    report = build_report([item], config)
+    assert len(report.daily_signals) == 1
+    assert report.diagnostics["fallback_level_used"] == "core_7d"
 
 
 def test_omnicom_agentic_buying_gets_specific_angles() -> None:

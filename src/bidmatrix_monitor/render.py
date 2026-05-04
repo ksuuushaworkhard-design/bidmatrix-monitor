@@ -34,13 +34,15 @@ def render_markdown(report: MonitorReport) -> str:
         lines.extend(["", "## Top Signal" if len(report.daily_signals) == 1 else "## Top Signals"])
         lines.extend(_daily_signal_cards(report.daily_signals))
     elif report.adjacent_watchlist:
-        lines.extend(["", "## Adjacent Watchlist"])
+        lines.extend(["", "## Market Watch"])
         lines.extend(_adjacent_watchlist_cards(report.adjacent_watchlist))
-    lines.extend([
-        "",
-        "## Strategic Context",
-    ])
-    lines.extend(_background_context(report))
+    background_lines = _background_context(report)
+    if background_lines and (report.daily_signals or report.adjacent_watchlist):
+        lines.extend([
+            "",
+            "## Strategic Context",
+        ])
+        lines.extend(background_lines)
 
     lines.append("")
     return "\n".join(lines)
@@ -174,12 +176,10 @@ def _background_context(report: MonitorReport) -> list[str]:
         seen.add(text.lower())
         date_label = item.published_date or "unknown"
         values.append(
-            f"- Background context, not a fresh daily signal. {text} Source: [{item.title}]({item.url}) | Date: {date_label}"
+            f"- {text} Source: [{item.title}]({item.url}) | Date: {date_label}"
         )
         if len(values) >= 2:
             break
-    if not values:
-        return ["- No useful background context was kept."]
     return values
 
 

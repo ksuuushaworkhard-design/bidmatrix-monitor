@@ -74,9 +74,10 @@ class ExaMonitorClient:
         self._config = config
 
     def search_topic(self, topic: Topic) -> list[NewsItem]:
-        return self.search_topic_layer(topic, "daily_fresh_signals") + self.search_topic_layer(
-            topic,
-            "strategic_background",
+        return (
+            self.search_topic_layer(topic, "daily_fresh_signals")
+            + self.search_topic_layer(topic, "market_watch_recent")
+            + self.search_topic_layer(topic, "strategic_background")
         )
 
     def search_topic_layer(self, topic: Topic, layer: str) -> list[NewsItem]:
@@ -127,6 +128,16 @@ class ExaMonitorClient:
                 "background explainers unless they contain a dated announcement in the last 72 hours. "
                 "Prefer named companies, products, conferences, reports, and platforms over broad themes."
             )
+        if layer == "market_watch_recent":
+            return (
+                f"{shared} Search layer: market_watch_recent. If strict daily news is thin, broaden into the last 7 to 14 days "
+                "across trusted sources and look for the best useful industry signals available. Include mobile app marketing news, "
+                "mobile user acquisition, app growth marketing, mobile attribution, SKAN, Privacy Sandbox, AppsFlyer, Adjust, "
+                "Singular, Airbridge, mobile ad fraud, IVT, traffic quality, programmatic in-app advertising, CTV for app marketing, "
+                "AI creative testing, AI media buying, app monetization, mobile adtech funding, partnerships, product launches, MAU "
+                "Vegas, Business of Apps, Mobile Marketing Reads, ExchangeWire, AdExchanger, and Digiday. Prefer trusted sources and "
+                "named companies over vague market commentary. Return only concrete developments that could support a Market Watch brief."
+            )
         return (
             f"{shared} Search layer: strategic_background. Include evergreen reports, benchmark pages, "
             "thought leadership, product pages, and long-form explainers only when they provide strategic "
@@ -138,6 +149,8 @@ class ExaMonitorClient:
 def _layer_domains(sources, layer: str) -> tuple[str, ...]:
     if layer == "daily_fresh_signals":
         return sources.fresh_priority_domains or sources.high_signal_domains
+    if layer == "market_watch_recent":
+        return sources.high_signal_domains or sources.fresh_priority_domains
     return sources.background_priority_domains or sources.high_signal_domains
 
 

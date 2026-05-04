@@ -35,15 +35,22 @@ def main() -> None:
 
     client = ExaMonitorClient(config)
     items = []
+    exa_errors: list[str] = []
     for topic in config.topics:
         print(f"Searching: {topic.label}")
-        items.extend(client.search_topic(topic))
+        try:
+            items.extend(client.search_topic(topic))
+        except Exception as exc:
+            message = f"{topic.label}: {exc}"
+            exa_errors.append(message)
+            print(f"Exa error for {topic.label}: {exc}")
 
-    report = build_report(items, config)
+    report = build_report(items, config, exa_errors=exa_errors)
     markdown_path, json_path, curated_json_path = write_report(report, Path(config.outputs.report_dir))
     print(f"Wrote {markdown_path}")
     print(f"Wrote {json_path}")
     print(f"Wrote {curated_json_path}")
+    _print_pipeline_state(report.diagnostics)
     if args.diagnostics:
         _print_diagnostics(report.diagnostics)
     maybe_deliver_report(config, markdown_path, "daily")
@@ -63,6 +70,21 @@ def _print_diagnostics(diagnostics: dict) -> None:
     print(f"  kept background_context: {diagnostics.get('kept_background_context')}")
     print(f"  page_type counts: {diagnostics.get('page_type_counts')}")
     print(f"  source_type counts: {diagnostics.get('source_type_counts')}")
+
+
+def _print_pipeline_state(diagnostics: dict) -> None:
+    print("Daily pipeline state:")
+    print(f"  raw_results_count: {diagnostics.get('raw_items_found', 0)}")
+    print(f"  parsed_signals_count: {diagnostics.get('parsed_signals_count', 0)}")
+    print(f"  core_count: {diagnostics.get('core_count', 0)}")
+    print(f"  adjacent_count: {diagnostics.get('adjacent_count', 0)}")
+    print(f"  background_count: {diagnostics.get('background_count', 0)}")
+    print(f"  ignored_count: {diagnostics.get('ignored_count', 0)}")
+    print(f"  fallback_level_used: {diagnostics.get('fallback_level_used', 'unknown')}")
+    print(f"  selected_top_signals_count: {diagnostics.get('selected_top_signals_count', 0)}")
+    print(f"  telegram_message_state: {diagnostics.get('telegram_message_state', 'unknown')}")
+    print(f"  curated_signals_kept: {diagnostics.get('curated_items_kept', 0)}")
+    print(f"  exa_errors: {diagnostics.get('exa_errors') or []}")
 
 
 if __name__ == "__main__":

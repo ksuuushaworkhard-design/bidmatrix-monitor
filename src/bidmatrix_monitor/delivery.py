@@ -86,12 +86,17 @@ def _telegram_message(subject: str, text: str, report_type: str) -> str:
         for index, item in enumerate(top_items[:2], start=1):
             lines.extend(_telegram_item(item, index))
     elif adjacent_items:
-        lines.append('No core BidMatrix-relevant signals found today.')
-        lines.extend(['', '<b>Adjacent watchlist</b>'])
+        lines = [title, "", "<b>Market Watch</b>"]
+        lines.append(html.escape(_shorten(_daily_intro_line(text), 220)))
+        lines.extend([""])
         for index, item in enumerate(adjacent_items[:2], start=1):
             lines.extend(_telegram_watchlist_item(item, index))
     else:
-        lines.append(html.escape(_shorten(_daily_intro_line(text), 220)))
+        intro_chunks = _daily_intro_paragraphs(text)
+        heading = "<b>Monitor error</b>" if any("no Exa results were available" in chunk for chunk in intro_chunks) else "<b>Market Watch</b>"
+        lines = [title, "", heading]
+        for chunk in intro_chunks:
+            lines.append(html.escape(chunk))
 
     if background and background not in {'No useful background context was kept.', 'Background context, not a fresh daily signal.'}:
         lines.extend(['', '<b>Strategic context</b>', html.escape(_executive_line(background, 180))])
@@ -194,7 +199,7 @@ def _report_items(text: str) -> list[dict[str, str]]:
         if stripped in {'## Top Signal', '## Top Signals'}:
             section = 'top'
             continue
-        if stripped == '## Adjacent Watchlist':
+        if stripped in {'## Adjacent Watchlist', '## Market Watch'}:
             section = 'adjacent'
             continue
         if stripped.startswith('## '):
@@ -272,13 +277,19 @@ def _strip_markdown_emphasis(text: str) -> str:
 
 def _daily_intro_line(text: str) -> str:
     match = re.search(
-        r"## Today's Useful Signal(?:s)?\s+(.+?)(?:\s+## Top Signal(?:s)?|\s+## Strategic Context|\Z)",
+        r"## Today's Useful Signal(?:s)?\s+(.+?)(?:\s+## Top Signal(?:s)?|\s+## Market Watch|\s+## Adjacent Watchlist|\s+## Strategic Context|\Z)",
         text,
         flags=re.DOTALL,
     )
     if not match:
         return "Today's brief uses the best relevant market signals available."
     return _clean_markdown_text(match.group(1).strip())
+
+
+def _daily_intro_paragraphs(text: str) -> list[str]:
+    intro = _daily_intro_line(text)
+    parts = [part.strip() for part in re.split(r"\n\s*\n", intro) if part.strip()]
+    return [_shorten(part, 280) for part in parts] or ["Today's brief uses the best relevant market signals available."]
 
 
 def _background_trend(text: str) -> str | None:
@@ -297,7 +308,10 @@ def _background_trend(text: str) -> str | None:
         if stripped.startswith("## "):
             break
         if stripped.startswith("- "):
-            return _clean_markdown_text(stripped.removeprefix("- ").strip())
+            cleaned = _clean_markdown_text(stripped.removeprefix("- ").strip())
+            if cleaned.lower().startswith("background context, not a fresh daily signal."):
+                return None
+            return cleaned
     return None
 
 
@@ -447,7 +461,7 @@ def _polish_sentence(text: str) -> str:
 
 def _clean_markdown_text(text: str) -> str:
     text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
-    text = text.replace("_", "").replace("**", "")
+    text = text.replace("**", "")
     return text.strip()
 
 

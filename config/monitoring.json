@@ -6,7 +6,7 @@
   "search": {
     "type": "deep",
     "category": "news",
-    "num_results_per_topic": 10,
+    "num_results_per_topic": 12,
     "max_age_hours": 24,
     "highlights": {
       "max_characters": 4000

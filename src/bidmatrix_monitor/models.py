@@ -135,3 +135,4 @@ class MonitorReport:
     content_angles_for_linkedin: list[str]
     pr_hooks: list[str]
     what_changed_today: list[str]
+    exa_errors: list[str] = field(default_factory=list)
