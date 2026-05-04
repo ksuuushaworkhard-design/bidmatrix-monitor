@@ -20,6 +20,7 @@ class SearchSettings:
     num_results_per_topic: int = 8
     max_age_hours: int | None = 24
     highlight_max_characters: int = 4000
+    request_timeout_seconds: int = 30
 
 
 @dataclass(frozen=True)

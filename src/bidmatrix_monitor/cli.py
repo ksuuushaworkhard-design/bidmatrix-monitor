@@ -44,6 +44,7 @@ def main() -> None:
             message = f"{topic.label}: {exc}"
             exa_errors.append(message)
             print(f"Exa error for {topic.label}: {exc}")
+        exa_errors.extend(client.pop_errors())
 
     report = build_report(items, config, exa_errors=exa_errors)
     markdown_path, json_path, curated_json_path = write_report(report, Path(config.outputs.report_dir))

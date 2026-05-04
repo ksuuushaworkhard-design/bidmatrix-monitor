@@ -5,6 +5,7 @@ from bidmatrix_monitor.models import MonitorConfig, NewsItem, OutputSettings, Se
 from bidmatrix_monitor.render import render_markdown
 from bidmatrix_monitor.weekly import render_weekly_markdown
 from bidmatrix_monitor.delivery import _telegram_message
+from bidmatrix_monitor.exa_client import ExaMonitorClient
 
 
 def test_dedupe_keeps_highest_relevance_for_url() -> None:
@@ -651,6 +652,35 @@ def test_exa_failure_path_records_errors() -> None:
     assert "no Exa results were available" in report.daily_intro
     assert report.exa_errors == ["Mobile UA: timeout"]
     assert report.diagnostics["exa_errors"] == ["Mobile UA: timeout"]
+
+
+def test_exa_client_fails_open_when_market_watch_layer_times_out() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5),
+        topics=(Topic(id="a", label="Adtech", query="adtech"),),
+    )
+    client = object.__new__(ExaMonitorClient)
+    client._config = config
+    client._last_errors = []
+
+    topic = Topic(id="a", label="Adtech", query="adtech")
+    good = NewsItem(topic_id="a", topic_label="Adtech", title="Good", url="https://example.com/good")
+
+    def fake_search_topic_layer(inner_topic, layer):
+        if layer == "market_watch_recent":
+            raise TimeoutError("Exa search timed out for market_watch_recent")
+        return [good]
+
+    client.search_topic_layer = fake_search_topic_layer  # type: ignore[method-assign]
+
+    items = client.search_topic(topic)
+
+    assert len(items) == 2
+    errors = client.pop_errors()
+    assert errors == ["Adtech [market_watch_recent]: Exa search timed out for market_watch_recent"]
 
 
 def test_adjacent_only_signals_render_watchlist_without_strategic_context() -> None:

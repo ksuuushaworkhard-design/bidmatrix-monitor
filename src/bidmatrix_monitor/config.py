@@ -41,6 +41,7 @@ def load_config(path: str | Path) -> MonitorConfig:
             num_results_per_topic=int(search.get("num_results_per_topic", 8)),
             max_age_hours=search.get("max_age_hours"),
             highlight_max_characters=int(highlights.get("max_characters", 4000)),
+            request_timeout_seconds=int(search.get("request_timeout_seconds", 30)),
         ),
         outputs=OutputSettings(
             report_dir=outputs.get("report_dir", "reports"),

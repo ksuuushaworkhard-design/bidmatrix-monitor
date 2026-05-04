@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import os
+import signal
+import threading
+from contextlib import contextmanager
 from typing import Any
 from urllib.parse import urlparse
 
@@ -72,29 +75,38 @@ class ExaMonitorClient:
             raise RuntimeError("EXA_API_KEY is not set. Add it to your environment or a local .env file.")
         self._exa = Exa(api_key=api_key)
         self._config = config
+        self._last_errors: list[str] = []
 
     def search_topic(self, topic: Topic) -> list[NewsItem]:
-        return (
-            self.search_topic_layer(topic, "daily_fresh_signals")
-            + self.search_topic_layer(topic, "market_watch_recent")
-            + self.search_topic_layer(topic, "strategic_background")
-        )
+        items: list[NewsItem] = []
+        for layer in ("daily_fresh_signals", "market_watch_recent", "strategic_background"):
+            try:
+                items.extend(self.search_topic_layer(topic, layer))
+            except Exception as exc:
+                self._last_errors.append(f"{topic.label} [{layer}]: {exc}")
+        return items
+
+    def pop_errors(self) -> list[str]:
+        errors = list(self._last_errors)
+        self._last_errors.clear()
+        return errors
 
     def search_topic_layer(self, topic: Topic, layer: str) -> list[NewsItem]:
         settings = self._config.search
         query = self._build_query(topic, layer)
-        response = self._exa.search(
-            query,
-            type=settings.type,
-            category=settings.category,
-            num_results=settings.num_results_per_topic,
-            output_schema=OUTPUT_SCHEMA,
-            contents={
-                "highlights": {
-                    "max_characters": settings.highlight_max_characters,
-                }
-            },
-        )
+        with _time_limit(_layer_timeout_seconds(settings.request_timeout_seconds, layer), f"Exa search timed out for {layer}"):
+            response = self._exa.search(
+                query,
+                type=settings.type,
+                category=settings.category,
+                num_results=settings.num_results_per_topic,
+                output_schema=OUTPUT_SCHEMA,
+                contents={
+                    "highlights": {
+                        "max_characters": settings.highlight_max_characters,
+                    }
+                },
+            )
         return _items_from_response(response, topic, layer)
 
     def _build_query(self, topic: Topic, layer: str) -> str:
@@ -152,6 +164,36 @@ def _layer_domains(sources, layer: str) -> tuple[str, ...]:
     if layer == "market_watch_recent":
         return sources.high_signal_domains or sources.fresh_priority_domains
     return sources.background_priority_domains or sources.high_signal_domains
+
+
+def _layer_timeout_seconds(base_timeout: int, layer: str) -> int:
+    if layer == "market_watch_recent":
+        return max(12, min(base_timeout, 20))
+    if layer == "strategic_background":
+        return max(15, min(base_timeout, 25))
+    return max(15, base_timeout)
+
+
+@contextmanager
+def _time_limit(seconds: int, message: str):
+    if seconds <= 0 or threading.current_thread() is not threading.main_thread() or not hasattr(signal, "SIGALRM"):
+        yield
+        return
+
+    def _handler(signum, frame):  # type: ignore[unused-argument]
+        raise TimeoutError(message)
+
+    previous_handler = signal.getsignal(signal.SIGALRM)
+    previous_timer = signal.getitimer(signal.ITIMER_REAL)
+    signal.signal(signal.SIGALRM, _handler)
+    signal.setitimer(signal.ITIMER_REAL, float(seconds))
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
+        if previous_timer != (0.0, 0.0):
+            signal.setitimer(signal.ITIMER_REAL, *previous_timer)
 
 
 def _items_from_response(response: Any, topic: Topic, layer: str) -> list[NewsItem]:
