@@ -37,6 +37,7 @@ class SearchSettings:
 class OutputSettings:
     report_dir: str = "reports"
     max_items_in_digest: int = 20
+    daily_digest_target: int = 4
     recurring_trend_min_mentions: int = 2
     min_relevance_score: int = 5
     sensitivity: str = "balanced"
@@ -137,11 +138,15 @@ class MonitorReport:
     trends: list[tuple[str, int]]
     daily_intro: str
     daily_signals: list[NewsItem]
+    daily_digest_items: list[NewsItem]
     adjacent_watchlist: list[NewsItem]
     top_news: list[NewsItem]
     actually_new_today: list[NewsItem]
     fresh_weak_confidence: list[NewsItem]
     background_items: list[NewsItem]
+    what_this_suggests: list[str]
+    bidmatrix_angles: list[str]
+    watch_next_items: list[str]
     hot_takes: list[str]
     partner_signals: list[NewsItem]
     competitor_moves: list[NewsItem]

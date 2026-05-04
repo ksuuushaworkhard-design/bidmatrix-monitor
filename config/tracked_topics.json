@@ -30,6 +30,12 @@
     "priority_keywords": ["ad fraud", "invalid traffic", "IVT", "brand safety", "viewability", "traffic quality", "newsroom", "press release", "report launch", "product update", "last 7 days"]
   },
   {
+    "id": "ctv-performance",
+    "label": "CTV and streaming performance announcements",
+    "query": "CTV app marketing performance connected TV app installs MMP attribution streaming inventory measurement newsroom press release product launch latest updates last 14 days",
+    "priority_keywords": ["CTV", "connected TV", "app installs", "MMP attribution", "streaming inventory", "performance media", "newsroom", "press release", "product launch", "last 14 days"]
+  },
+  {
     "id": "ai-marketing-creative",
     "label": "AI creative and marketing product launches",
     "query": "AI creative testing mobile marketing AI media buying performance marketing AI campaign operations creative optimization mobile advertising launch announcement newsroom press release latest updates last 14 days",

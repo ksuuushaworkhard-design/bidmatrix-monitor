@@ -74,34 +74,53 @@ def _telegram_message(subject: str, text: str, report_type: str) -> str:
         return '\n'.join([title, '', 'Daily brief skipped: not enough relevant market signals found today.'])
 
     items = _report_items(text)
-    top_items = [item for item in items if item.get('section') == 'top' and item.get('confidence') in {'high', 'medium'}]
+    all_top_items = [item for item in items if item.get('section') == 'top']
     adjacent_items = [item for item in items if item.get('section') == 'adjacent']
+    top_items = [item for item in all_top_items if item.get('confidence') in {'high', 'medium'}]
+    intro = _daily_intro_line(text)
+    suggests = _section_bullets(text, "## What This Suggests")
+    angles = _section_bullets(text, "## BidMatrix Angles")
+    watch = _section_bullets(text, "## Watch Next")
     background = _background_trend(text)
-    lines = [title, "", "<b>Today's useful signals</b>"]
+    lines = [title]
 
-    if top_items:
+    if top_items and intro.lower().startswith("found "):
         noun = 'signal' if len(top_items) == 1 else 'signals'
-        lines.append(html.escape(f'Found {len(top_items)} core {noun} worth attention today.'))
-        lines.extend(['', '<b>Top signal</b>' if len(top_items) == 1 else '<b>Top signals</b>'])
-        for index, item in enumerate(top_items[:2], start=1):
+        lines.extend(["", "<b>Today's useful signals</b>", html.escape(f'Found {len(top_items)} core {noun} worth attention today.')])
+        lines.extend(['', '<b>Top market signal</b>' if len(top_items) == 1 else '<b>Top market signals</b>'])
+        for index, item in enumerate(top_items[:3], start=1):
             lines.extend(_telegram_item(item, index))
-    elif adjacent_items:
-        lines = [title, "", "<b>Market Watch</b>"]
-        lines.append(html.escape(_shorten(_daily_intro_line(text), 220)))
-        lines.extend([""])
-        for index, item in enumerate(adjacent_items[:2], start=1):
+    elif all_top_items or adjacent_items:
+        digest_items = all_top_items or adjacent_items
+        lines.extend(["", "<b>Market Watch</b>", html.escape(_shorten(intro, 220)), "", "<b>Top market signals</b>"])
+        for index, item in enumerate(digest_items[:3], start=1):
             lines.extend(_telegram_watchlist_item(item, index))
     else:
         intro_chunks = _daily_intro_paragraphs(text)
         heading = "<b>Monitor error</b>" if any("no Exa results were available" in chunk for chunk in intro_chunks) else "<b>Market Watch</b>"
-        lines = [title, "", heading]
+        lines.extend(["", heading])
         for chunk in intro_chunks:
             lines.append(html.escape(chunk))
 
-    if background and background not in {'No useful background context was kept.', 'Background context, not a fresh daily signal.'}:
+    if suggests:
+        lines.extend(["", "<b>What this suggests</b>"])
+        for value in suggests[:3]:
+            lines.append(f"- {html.escape(_executive_line(value, 180))}")
+
+    if angles:
+        lines.extend(["", "<b>BidMatrix angles</b>"])
+        for value in angles[:4]:
+            lines.append(f"- {html.escape(_executive_line(value, 170))}")
+
+    if watch:
+        lines.extend(["", "<b>Watch next</b>"])
+        for value in watch[:4]:
+            lines.append(f"- {html.escape(_executive_line(value, 160))}")
+
+    if background and background not in {'No useful background context was kept.', 'Background context, not a fresh daily signal.'} and not top_items:
         lines.extend(['', '<b>Strategic context</b>', html.escape(_executive_line(background, 180))])
 
-    return _truncate_daily('\n'.join(lines), 3200)
+    return _truncate_daily('\n'.join(lines), 3800)
 
 def _telegram_weekly_message(subject: str, text: str) -> str:
     date_label = _date_from_subject(subject)
@@ -196,7 +215,7 @@ def _report_items(text: str) -> list[dict[str, str]]:
 
     for line in text.splitlines():
         stripped = line.strip()
-        if stripped in {'## Top Signal', '## Top Signals'}:
+        if stripped in {'## Top Signal', '## Top Signals', '## Top Market Signal', '## Top Market Signals'}:
             section = 'top'
             continue
         if stripped in {'## Adjacent Watchlist', '## Market Watch'}:
@@ -277,7 +296,7 @@ def _strip_markdown_emphasis(text: str) -> str:
 
 def _daily_intro_line(text: str) -> str:
     match = re.search(
-        r"## Today's Useful Signal(?:s)?\s+(.+?)(?:\s+## Top Signal(?:s)?|\s+## Market Watch|\s+## Adjacent Watchlist|\s+## Strategic Context|\Z)",
+        r"## Today's Useful Signal(?:s)?\s+(.+?)(?:\s+## Top Signal(?:s)?|\s+## Top Market Signal(?:s)?|\s+## Market Watch|\s+## Adjacent Watchlist|\s+## Strategic Context|\s+## What This Suggests|\Z)",
         text,
         flags=re.DOTALL,
     )
@@ -313,6 +332,22 @@ def _background_trend(text: str) -> str | None:
                 return None
             return cleaned
     return None
+
+
+def _section_bullets(text: str, heading: str) -> list[str]:
+    lines = text.splitlines()
+    try:
+        start = lines.index(heading)
+    except ValueError:
+        return []
+    values: list[str] = []
+    for line in lines[start + 1 :]:
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            break
+        if stripped.startswith("- "):
+            values.append(_clean_markdown_text(stripped[2:].strip()))
+    return values
 
 
 def _telegram_item(item: dict[str, str], index: int) -> list[str]:
@@ -437,8 +472,10 @@ def _polish_sentence(text: str) -> str:
     cleaned = re.sub(r"\bbrand-safe supply\b", "safer, higher-quality ad inventory", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\bbrand safety\b", "ad safety", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\bARPU\b", "revenue", cleaned)
-    cleaned = re.sub(r"\bpublisher monetization\b", "how apps make money from ads", cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r"\bmonetization\b", "how apps make money from ads", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\bpublisher monetization\b", "app monetization", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"(?<!in-app )\bmonetization economics\b", "in-app monetization economics", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"(?<!app )\bmonetization partners\b", "app monetization partners", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"(?<!app )(?<!in-app )(?<!publisher )\bmonetization\b", "app monetization", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\bad inventory\b", "ad space", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\bapp retention\b", "user retention", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\bmalvertising\b", "harmful ads", cleaned, flags=re.IGNORECASE)
@@ -492,7 +529,14 @@ def _truncate_daily(text: str, max_chars: int) -> str:
     if len(text) <= max_chars:
         return text
     marker = "<b>Source</b>"
-    idx = text.find(marker)
+    idx = -1
+    start = 0
+    for _ in range(3):
+        found = text.find(marker, start)
+        if found == -1:
+            break
+        idx = found
+        start = found + len(marker)
     if idx != -1:
         next_break = text.find("\n\n", idx)
         if next_break != -1 and next_break < max_chars:

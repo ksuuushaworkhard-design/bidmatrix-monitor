@@ -27,15 +27,21 @@ def render_markdown(report: MonitorReport) -> str:
     lines = [
         f"# BidMatrix Daily Brief - {report.run_date.isoformat()}",
         "",
-        "## Today's Useful Signal" if len(report.daily_signals) == 1 else "## Today's Useful Signals",
+        "## Today's Useful Signal" if len(report.daily_digest_items) == 1 else "## Today's Useful Signals",
         report.daily_intro,
     ]
-    if report.daily_signals:
-        lines.extend(["", "## Top Signal" if len(report.daily_signals) == 1 else "## Top Signals"])
-        lines.extend(_daily_signal_cards(report.daily_signals))
-    elif report.adjacent_watchlist:
-        lines.extend(["", "## Market Watch"])
-        lines.extend(_adjacent_watchlist_cards(report.adjacent_watchlist))
+    if report.daily_digest_items:
+        lines.extend(["", "## Top Market Signal" if len(report.daily_digest_items) == 1 else "## Top Market Signals"])
+        lines.extend(_digest_signal_cards(report.daily_digest_items, market_watch=not bool(report.daily_signals)))
+    if report.what_this_suggests:
+        lines.extend(["", "## What This Suggests"])
+        lines.extend(f"- {value}" for value in report.what_this_suggests)
+    if report.bidmatrix_angles:
+        lines.extend(["", "## BidMatrix Angles"])
+        lines.extend(f"- {value}" for value in report.bidmatrix_angles)
+    if report.watch_next_items:
+        lines.extend(["", "## Watch Next"])
+        lines.extend(f"- {value}" for value in report.watch_next_items)
     background_lines = _background_context(report)
     if background_lines and report.daily_signals:
         lines.extend([
@@ -127,44 +133,24 @@ def _item_cards(items: list[NewsItem], empty: str = "No items found.") -> list[s
     return lines
 
 
-def _daily_signal_cards(items: list[NewsItem]) -> list[str]:
+def _digest_signal_cards(items: list[NewsItem], market_watch: bool = False) -> list[str]:
     lines: list[str] = []
     for index, item in enumerate(items, start=1):
         entity = _lead_entity(item)
         title = _event_line(item, entity)
+        label = "Why it may matter" if market_watch else "Why it matters"
+        use_label = "BidMatrix use" if market_watch else "BidMatrix angle"
         lines.extend(
             [
                 f"### {index}. {title}",
                 f"- What happened: {_sentence(item.what_happened or _what_happened(item))}",
-                f"- Why it matters: {_sentence(item.why_now or _why_it_matters(item))}",
-                f"- Market context: {_sentence(_market_context_line(item))}",
-                f"- BidMatrix angle: {_sentence(item.why_it_matters_for_bidmatrix or item.bidmatrix_angle or item.why_it_matters)}",
-                f"- Content angle: {_sentence(item.content_angle or item.linkedin_post_angle)}",
-                f"- Action: {_sentence(item.concrete_action or item.partner_or_sales_action)}",
-                f"- Watch next: {_sentence(item.watch_next)}",
+                f"- {label}: {_sentence(item.why_now or _why_it_matters(item))}",
+                f"- {use_label}: {_sentence(item.why_it_matters_for_bidmatrix or item.bidmatrix_angle or item.why_it_matters)}",
                 f"- Source: [{item.source_title or item.title}]({item.source_url or item.url}) - {_source_label(item)} - Date: {item.published_date or 'unknown'} - confidence: {item.confidence}",
                 "",
             ]
         )
     return lines[:-1] if lines else ["- No usable signal cards were generated."]
-
-
-
-def _adjacent_watchlist_cards(items: list[NewsItem]) -> list[str]:
-    lines: list[str] = []
-    for index, item in enumerate(items, start=1):
-        entity = _lead_entity(item)
-        title = _event_line(item, entity)
-        lines.extend(
-            [
-                f"### {index}. {title}",
-                f"- Why it may matter: {_sentence(item.why_now or item.market_context or item.why_it_matters)}",
-                f"- BidMatrix use: {_sentence(item.why_it_matters_for_bidmatrix or item.bidmatrix_angle or 'Relevance to BidMatrix is indirect; keep as watchlist only.')}",
-                f"- Source: [{item.source_title or item.title}]({item.source_url or item.url}) - {_source_label(item)} - Date: {item.published_date or 'unknown'}",
-                "",
-            ]
-        )
-    return lines[:-1] if lines else ["- No adjacent watchlist items were kept."]
 
 def _background_context(report: MonitorReport) -> list[str]:
     values: list[str] = []
@@ -398,11 +384,15 @@ def _report_to_dict(report: MonitorReport) -> dict:
         "trends": [{"topic": trend, "mentions": count} for trend, count in report.trends],
         "daily_intro": report.daily_intro,
         "daily_signals": [_item_to_dict(item) for item in report.daily_signals],
+        "daily_digest_items": [_item_to_dict(item) for item in report.daily_digest_items],
         "adjacent_watchlist": [_item_to_dict(item) for item in report.adjacent_watchlist],
         "top_news": [_item_to_dict(item) for item in report.top_news],
         "actually_new_today": [_item_to_dict(item) for item in report.actually_new_today],
         "fresh_weak_confidence": [_item_to_dict(item) for item in report.fresh_weak_confidence],
         "background_items": [_item_to_dict(item) for item in report.background_items],
+        "what_this_suggests": report.what_this_suggests,
+        "bidmatrix_angles": report.bidmatrix_angles,
+        "watch_next_items": report.watch_next_items,
         "hot_takes": report.hot_takes,
         "partner_signals": [_item_to_dict(item) for item in report.partner_signals],
         "competitor_moves": [_item_to_dict(item) for item in report.competitor_moves],
@@ -418,11 +408,15 @@ def _curated_report_to_dict(report: MonitorReport) -> dict:
         "diagnostics": report.diagnostics,
         "daily_intro": report.daily_intro,
         "daily_signals": [_curated_item(item) for item in report.daily_signals],
+        "daily_digest_items": [_curated_item(item) for item in report.daily_digest_items],
         "adjacent_watchlist": [_curated_item(item) for item in report.adjacent_watchlist],
         "top_news": [_curated_item(item) for item in report.top_news],
         "actually_new_today": [_curated_item(item) for item in report.actually_new_today],
         "fresh_weak_confidence": [_curated_item(item) for item in report.fresh_weak_confidence],
         "background_items": [_curated_item(item) for item in report.background_items],
+        "what_this_suggests": report.what_this_suggests,
+        "bidmatrix_angles": report.bidmatrix_angles,
+        "watch_next_items": report.watch_next_items,
         "hot_takes": report.hot_takes,
         "partner_signals": [_curated_item(item) for item in report.partner_signals],
         "competitor_moves": [_curated_item(item) for item in report.competitor_moves],

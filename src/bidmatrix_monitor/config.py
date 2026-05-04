@@ -56,6 +56,7 @@ def load_config(path: str | Path) -> MonitorConfig:
         outputs=OutputSettings(
             report_dir=outputs.get("report_dir", "reports"),
             max_items_in_digest=int(outputs.get("max_items_in_digest", 20)),
+            daily_digest_target=int(outputs.get("daily_digest_target", 4)),
             recurring_trend_min_mentions=int(outputs.get("recurring_trend_min_mentions", 2)),
             min_relevance_score=int(outputs.get("min_relevance_score", 5)),
             sensitivity=_sensitivity(outputs.get("sensitivity", "balanced")),

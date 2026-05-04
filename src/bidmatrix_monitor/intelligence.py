@@ -56,20 +56,23 @@ def build_report(
         and item.freshness_tier == "background_context"
         and item.final_score >= thresholds["background_min_score"]
     ][:5]
+    digest_target = max(2, min(config.outputs.daily_digest_target, 5))
     daily_signals, adjacent_watchlist, fallback_level_used, market_watch_meta = _select_daily_content(
         core_curated=core_curated,
         adjacent_curated=adjacent_curated,
         deduped=deduped,
         thresholds=thresholds,
-        target=3,
+        target=digest_target,
     )
+    daily_digest_items = daily_signals if daily_signals else adjacent_watchlist
     background_items = all_background_items if (daily_signals or adjacent_watchlist) else []
-    report_items = _unique_items(curated + background_items + adjacent_watchlist)
+    report_items = _unique_items(curated + background_items + adjacent_watchlist + daily_digest_items)
     diagnostics = _diagnostics(items, deduped, curated, background_items, thresholds)
     diagnostics.update(exa_meta or {})
     diagnostics["kept_core_signals"] = len(core_curated)
     diagnostics["kept_adjacent_signals"] = len(adjacent_curated)
     diagnostics["selected_top_signals_count"] = len(daily_signals)
+    diagnostics["selected_digest_items_count"] = len(daily_digest_items)
     diagnostics["fallback_level_used"] = fallback_level_used
     diagnostics.update(market_watch_meta)
     diagnostics["telegram_message_state"] = _telegram_message_state(daily_signals, adjacent_watchlist, background_items, items, exa_errors or [])
@@ -102,6 +105,7 @@ def build_report(
             diagnostics,
         ),
         daily_signals=daily_signals,
+        daily_digest_items=daily_digest_items,
         adjacent_watchlist=adjacent_watchlist,
         top_news=top_news,
         actually_new_today=[
@@ -116,6 +120,9 @@ def build_report(
             and (item.date_quality != "explicit_date" or item.freshness_confidence < 4)
         ][:5],
         background_items=background_items,
+        what_this_suggests=_daily_digest_synthesis(daily_digest_items),
+        bidmatrix_angles=_bidmatrix_angles(daily_digest_items),
+        watch_next_items=_watch_next_items(daily_digest_items),
         hot_takes=_hot_takes(primary_items, trends)[:6],
         partner_signals=partner_signals,
         competitor_moves=competitor_moves,
@@ -145,36 +152,13 @@ def _select_daily_content(
             return daily_signals, [], "core_72h", {}
         return daily_signals, [], "core_24h", {}
 
-    strong_adjacent = [item for item in adjacent_curated if item.confidence in {"high", "medium"}]
-    adjacent_recent = _recent_signals(strong_adjacent, target=3)
-    if adjacent_recent:
-        for item in adjacent_recent:
-            if not item.market_watch_priority_score:
-                item.market_watch_priority_score, item.market_watch_reason = _market_watch_priority(item)
-        meta = {
-            "market_watch_candidates_count": len(strong_adjacent),
-            "selected_market_watch_reason": adjacent_recent[0].market_watch_reason or "adjacent_recent_signal",
-            "selected_market_watch_priority_score": adjacent_recent[0].market_watch_priority_score,
-            "market_watch_rejections": [],
-        }
-        return [], adjacent_recent, "market_watch_7d", meta
-
-    broader_recent, market_watch_meta = _recent_market_watch_items(deduped, thresholds, target=3)
+    broader_recent, market_watch_meta = _recent_market_watch_items(deduped, thresholds, target=target)
     if broader_recent:
         return [], broader_recent, "market_watch_14d", market_watch_meta
 
-    older_recent = _best_available_recent_items(deduped, target=3)
+    older_recent, older_meta = _best_available_recent_items(deduped, target=target)
     if older_recent:
-        for item in older_recent:
-            if not item.market_watch_priority_score:
-                item.market_watch_priority_score, item.market_watch_reason = _market_watch_priority(item)
-        meta = {
-            "market_watch_candidates_count": len(older_recent),
-            "selected_market_watch_reason": "best_available_recent_signal",
-            "selected_market_watch_priority_score": older_recent[0].market_watch_priority_score,
-            "market_watch_rejections": [],
-        }
-        return [], older_recent, "market_watch_best_available", meta
+        return [], older_recent, "market_watch_best_available", older_meta
 
     return [], [], "empty", {
         "market_watch_candidates_count": 0,
@@ -229,7 +213,7 @@ def _recent_market_watch_items(
             value[2].title.lower(),
         ),
     )
-    selected = [item for _, _, item in ranked[:target]]
+    selected = _select_diverse_market_watch_items(ranked, target, minimum=2)
     meta: dict[str, object] = {
         "market_watch_candidates_count": len(unique_candidates),
         "selected_market_watch_reason": selected[0].market_watch_reason if selected else "",
@@ -273,10 +257,7 @@ def _daily_intro(
         return f'Found {count} core {noun} worth attention today.'
     if adjacent_watchlist:
         if fallback_level_used == "market_watch_best_available":
-            return (
-                "Exa returned results, but no fresh BidMatrix-core items passed the filters. "
-                "Here are the strongest recent relevant items available."
-            )
+            return "No major core BidMatrix signal dominated today, but several relevant market moves are worth tracking."
         return 'No direct core BidMatrix signal dominated today, so this brief uses the strongest adjacent industry signals worth monitoring.'
     if not raw_items:
         return (
@@ -396,22 +377,84 @@ def _telegram_message_state(
     return "empty"
 
 
-def _best_available_recent_items(items: list[NewsItem], target: int) -> list[NewsItem]:
+def _best_available_recent_items(items: list[NewsItem], target: int) -> tuple[list[NewsItem], dict[str, object]]:
     candidates = [
         item
         for item in items
         if item.relevance_tier in {"core", "adjacent"}
-        and item.confidence in {"high", "medium"}
+        and (_is_last_14d(item) or item.freshness_tier == "background_context")
     ]
-    return sorted(
-        _unique_items(candidates),
-        key=lambda item: (-item.final_score, -item.freshness_confidence, item.title.lower()),
-    )[:target]
+    unique_candidates = _unique_items(candidates)
+    ranked: list[tuple[int, str, NewsItem]] = []
+    for item in unique_candidates:
+        priority, reason = _market_watch_priority(item)
+        item.market_watch_priority_score = priority
+        item.market_watch_reason = reason
+        ranked.append((priority + _confidence_bonus(item), reason, item))
+    ranked.sort(key=lambda value: (-value[0], -value[2].final_score, -value[2].freshness_confidence, value[2].title.lower()))
+    selected = _select_diverse_market_watch_items(ranked, target, minimum=2)
+    meta = {
+        "market_watch_candidates_count": len(unique_candidates),
+        "selected_market_watch_reason": selected[0].market_watch_reason if selected else "",
+        "selected_market_watch_priority_score": selected[0].market_watch_priority_score if selected else 0,
+        "market_watch_rejections": [
+            {
+                "title": item.title,
+                "priority_score": priority,
+                "reason": reason,
+            }
+            for priority, reason, item in ranked
+            if item not in selected
+        ][:5],
+    }
+    return selected, meta
+
+
+def _select_diverse_market_watch_items(
+    ranked: list[tuple[int, str, NewsItem]], target: int, minimum: int = 2
+) -> list[NewsItem]:
+    if not ranked:
+        return []
+
+    selected: list[NewsItem] = []
+    seen_urls: set[str] = set()
+    seen_reasons: set[str] = set()
+    max_items = max(minimum, min(target, 5))
+
+    for _, reason, item in ranked:
+        if item.normalized_url in seen_urls:
+            continue
+        if item.market_watch_priority_score <= 15 and len(selected) >= 3:
+            continue
+        if reason in seen_reasons and len(selected) < minimum:
+            continue
+        if reason in seen_reasons and item.market_watch_priority_score <= 15:
+            continue
+        selected.append(item)
+        seen_urls.add(item.normalized_url)
+        seen_reasons.add(reason)
+        if len(selected) >= max_items:
+            return selected
+
+    for priority, _, item in ranked:
+        if item.normalized_url in seen_urls:
+            continue
+        if priority <= 15 and len(selected) >= 3:
+            continue
+        selected.append(item)
+        seen_urls.add(item.normalized_url)
+        if len(selected) >= max_items:
+            break
+    return selected
+
+
+def _confidence_bonus(item: NewsItem) -> int:
+    return {"high": 8, "medium": 4, "low": 0}.get(item.confidence, 0)
 
 
 def _market_watch_priority(item: NewsItem) -> tuple[int, str]:
     text = _item_text(item)
-    if _has_terms(item, "appsflyer", "adjust", "singular", "airbridge", "kochava", "branch", "mmp", "attribution", "measurement", "skan", "privacy sandbox", "adattributionkit"):
+    if _has_terms(item, "appsflyer", "adjust", "singular", "airbridge", "kochava", "branch", "mmp", "attribution", "skan", "privacy sandbox", "adattributionkit", "measurement partner", "conversion value", "postback"):
         return 100, "measurement_attribution_priority"
     if _has_terms(item, "mobile user acquisition", "user acquisition", "app growth", "performance marketing", "app marketers", "app advertisers", "mobile marketing"):
         return 90, "mobile_ua_app_growth_priority"
@@ -575,6 +618,45 @@ def _normalized_signal_type(item: NewsItem) -> str:
     if any(term in text for term in ("update", "updated", "rollout", "version")):
         return "platform_update"
     return "other"
+
+
+def _daily_digest_synthesis(items: list[NewsItem]) -> list[str]:
+    if len(items) < 2:
+        return []
+
+    reasons = {item.market_watch_reason for item in items if item.market_watch_reason}
+    sentences: list[str] = []
+    if any("measurement" in reason for reason in reasons) and any("ctv" in reason for reason in reasons):
+        sentences.append(
+            "Measurement changes and performance CTV signals both point to a market that wants clearer proof of outcomes, not just more reach."
+        )
+    if any("ai" in reason for reason in reasons) and any("programmatic" in reason or "mobile_ua" in reason for reason in reasons):
+        sentences.append(
+            "Automation is moving deeper into media operations, but advertisers still need transparent supply, usable attribution, and human QA around performance."
+        )
+    if any("programmatic" in reason for reason in reasons):
+        sentences.append(
+            "The common thread is that app inventory is being packaged with more emphasis on direct brand-demand paths, measurable quality, and stronger in-app monetization economics."
+        )
+    if any("measurement" in reason for reason in reasons):
+        sentences.append(
+            "Attribution resilience and privacy-safe optimization remain central to how growth teams decide where budget should move next."
+        )
+    if not sentences:
+        sentences.append(
+            "The common thread is not more adtech noise, but stronger pressure for measurable outcomes, cleaner inventory, and better decision support."
+        )
+    return _unique_nonempty(sentences)[:4]
+
+
+def _bidmatrix_angles(items: list[NewsItem]) -> list[str]:
+    values = [item.why_it_matters_for_bidmatrix or item.bidmatrix_angle for item in items]
+    return _unique_nonempty(values)[:5]
+
+
+def _watch_next_items(items: list[NewsItem]) -> list[str]:
+    values = [item.watch_next for item in items]
+    return _unique_nonempty(values)[:4]
 
 
 def _trends(items: list[NewsItem], min_mentions: int) -> list[tuple[str, int]]:
@@ -949,7 +1031,7 @@ def _bidmatrix_angle(item: NewsItem) -> str:
     if _has_terms(item, 'fraud', 'invalid traffic', 'quality', 'brand safety', 'viewability'):
         return 'Strengthens BidMatrix positioning around quality traffic, safer in-app supply, and performance protection.'
     if _has_terms(item, 'omnicom', 'agentic media buying', 'agentic buying', 'media buying agents', 'agentic'):
-        return "Agentic buying is moving from concept to live media operations. This supports BidMatrix's AI-native positioning, but the useful angle is not AI hype — it is how automated buying still needs transparent supply, measurable outcomes, and human QA around performance."
+        return "Supports BidMatrix's AI-native positioning: automation can speed up buying, but advertisers still need transparent supply, attribution clarity, and performance safeguards."
     if _has_terms(item, 'connected tv', 'ctv', 'viewability', 'device verification', 'invalid traffic'):
         return 'Gives BidMatrix a concrete angle on transparent CTV, verified environments, and performance measurement beyond impressions.'
     if _has_terms(item, 'doubleverify', 'slopstopper', 'ai-generated content', 'brand suitability', 'youtube'):
@@ -992,7 +1074,7 @@ def _partner_or_sales_action(item: NewsItem) -> str:
     if _has_terms(item, "daivid", "adin.ai", "creative effectiveness", "creative intelligence", "budget shifts"):
         return "Track whether creative intelligence vendors start integrating more directly with media buying, MMPs, or campaign optimization platforms."
     if _has_terms(item, "chartboost direct", "brand demand", "direct deals", "marketplace", "publisher"):
-        return "Use this in partner or sales messaging about curated in-app supply, direct brand demand, and premium app monetization."
+        return "Use this in partner or sales messaging about curated in-app supply, direct brand-demand paths, and better app monetization through ad demand."
     if companies:
         if _has_terms(item, "fraud", "quality", "brand safety", "invalid traffic"):
             return f"Use this signal in partner outreach or sales conversations about traffic quality with {companies}."
@@ -1274,7 +1356,7 @@ def _best_watch_next(item: NewsItem) -> str:
     if _has_terms(item, "daivid", "adin.ai", "creative effectiveness", "creative intelligence", "budget shifts"):
         return _sentence_cleanup("Track whether creative intelligence vendors start integrating more directly with media buying, MMPs, or campaign optimization platforms.")
     if _has_terms(item, "chartboost direct", "brand demand", "direct deals", "marketplace", "publisher"):
-        return _sentence_cleanup("Track whether more app monetization partners launch direct brand-demand paths or curated marketplace deals.")
+        return _sentence_cleanup("Track whether more app monetization partners launch direct brand-demand paths or curated marketplace deals for app inventory.")
     if item.signal_type == "privacy_measurement":
         return _sentence_cleanup(f"Track whether {companies} publish follow-up SDK, postback, or implementation guidance.")
     if item.signal_type == "fraud_quality":

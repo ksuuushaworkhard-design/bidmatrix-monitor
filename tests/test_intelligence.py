@@ -303,8 +303,7 @@ def test_market_context_does_not_repeat_what_happened() -> None:
         sources=SourceConfig(high_signal_domains=("example.com",), fresh_priority_domains=("example.com",)),
     )
     report = build_report([item], config)
-    rendered = render_markdown(report)
-    assert "Creative intelligence is moving from post-campaign reporting into live media optimization and budget allocation." in rendered
+    assert report.daily_digest_items[0].market_context == "Creative intelligence is moving from post-campaign reporting into live media optimization and budget allocation."
 
 
 def test_render_uses_singular_heading_for_one_daily_signal() -> None:
@@ -329,7 +328,7 @@ def test_render_uses_singular_heading_for_one_daily_signal() -> None:
     report = build_report([item], config)
     rendered = render_markdown(report)
     assert "## Today's Useful Signal" in rendered
-    assert "## Top Signal" in rendered
+    assert "## Top Market Signal" in rendered
 
 
 def test_weekly_pr_angle_is_not_date_only_and_not_clipped() -> None:
@@ -357,9 +356,9 @@ def test_daily_telegram_message_includes_top_signal_fields() -> None:
     markdown = """# BidMatrix Daily Brief - 2026-04-29
 
 ## Today's Useful Signal
-Today's brief uses the best relevant signals from the last 72 hours.
+Found 1 core signal worth attention today.
 
-## Top Signal
+## Top Market Signal
 ### 1. DAIVID x ADIN.AI — AI creative-effectiveness data moves closer to media optimization
 - What happened: DAIVID partnered with ADIN.AI to bring AI creative-effectiveness data into media optimization.
 - Why it matters: Creative intelligence is moving into live media decisioning.
@@ -370,9 +369,9 @@ Today's brief uses the best relevant signals from the last 72 hours.
 - Watch next: Track whether creative intelligence vendors integrate more directly with media buying platforms.
 - Source: [DAIVID & ADIN.AI Partner](https://example.com/daivid) - exchangewire.com (high-signal) - confidence: high
 
-"""
+    """
     message = _telegram_message("BidMatrix Daily Market Brief - 2026-04-29", markdown, "daily")
-    assert "Top signal" in message
+    assert "Top market signal" in message
     assert "What happened" in message
     assert "Why it matters" in message
     assert "BidMatrix angle" in message
@@ -564,7 +563,7 @@ Found 2 core signals worth attention today.
 """
     message = _telegram_message('BidMatrix Daily Market Brief - 2026-04-29', markdown, 'daily')
     assert 'Found 2 core signals worth attention today.' in message
-    assert '<b>Top signals</b>' in message
+    assert '<b>Top market signals</b>' in message
 
 
 def test_low_confidence_items_are_not_rendered_as_top_signals() -> None:
@@ -759,9 +758,9 @@ def test_adjacent_only_signals_render_watchlist_without_strategic_context() -> N
     )
     report = build_report([adjacent], config)
     markdown = render_markdown(report)
-    assert "## Market Watch" in markdown
+    assert "## Top Market Signal" in markdown
     assert "## Strategic Context" not in markdown
-    assert report.diagnostics["fallback_level_used"] == "market_watch_7d"
+    assert report.diagnostics["fallback_level_used"] == "market_watch_14d"
 
 
 def test_telegram_adjacent_only_case_uses_no_core_message() -> None:
@@ -882,7 +881,7 @@ def test_partial_exa_results_still_produce_brief() -> None:
     )
     report = build_report([item], config, exa_errors=["market_watch_recent: timed out"])
     markdown = render_markdown(report)
-    assert "## Top Signal" in markdown
+    assert "## Top Market Signal" in markdown
     assert "AppsFlyer" in markdown
     assert "no Exa results were available" not in markdown
 
@@ -925,7 +924,7 @@ def test_market_watch_recent_timeout_does_not_block_final_rendering() -> None:
     )
     report = build_report([item], config, exa_errors=["market_watch_recent: timeout"])
     message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-03", render_markdown(report), "daily")
-    assert "<b>Top signal</b>" in message
+    assert "<b>Top market signal</b>" in message
     assert "Omnicom" in message
     assert "<b>Monitor error</b>" not in message
 
@@ -1009,7 +1008,7 @@ def test_raw_results_with_all_items_filtered_by_freshness_use_market_watch_not_m
     assert report.diagnostics["telegram_message_state"] in {"adjacent", "market_watch"}
     assert report.diagnostics["fallback_level_used"] == "market_watch_best_available"
     assert "no Exa results were available" not in report.daily_intro
-    assert "## Market Watch" in markdown
+    assert "## Top Market Signals" in markdown
 
 
 def test_raw_results_exist_never_use_monitor_error_message() -> None:
@@ -1327,3 +1326,146 @@ def test_overwolf_stays_indirect_watchlist_only() -> None:
     angle = report.adjacent_watchlist[0].why_it_matters_for_bidmatrix
     assert "indirect" in angle.lower()
     assert "watchlist only" in angle.lower()
+
+
+def test_market_watch_digest_renders_multiple_items_when_candidates_exist() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="balanced", daily_digest_target=4),
+        topics=(Topic(id="mw", label="Market Watch", query="market watch"),),
+        sources=SourceConfig(high_signal_domains=("example.com",), fresh_priority_domains=("example.com",)),
+    )
+    items = [
+        _market_watch_candidate(
+            "LoopMe launches Chartboost Direct",
+            "LoopMe launched Chartboost Direct to bring direct brand demand into mobile apps with curated marketplace and PMP workflows.",
+            "Brand budgets are moving into curated in-app inventory and premium publisher monetization.",
+            companies=["LoopMe", "Chartboost"],
+        ),
+        _market_watch_candidate(
+            "Moloco launches performance CTV for app marketers",
+            "Moloco launched performance CTV with connected TV campaign optimization, install outcomes, and measurable ROI across streaming inventory.",
+            "CTV is being used like performance media rather than reach-only media.",
+            companies=["Moloco"],
+        ),
+        _market_watch_candidate(
+            "AppsFlyer updates SKAN measurement workflow",
+            "AppsFlyer updated SKAN and attribution guidance for app marketers using Privacy Sandbox and MMP workflows.",
+            "Measurement teams need this change for live attribution decisions.",
+            companies=["AppsFlyer"],
+        ),
+        _market_watch_candidate(
+            "Omnicom rolls out agentic media buying workflow",
+            "Omnicom rolled out AI media buying and campaign optimization workflows for live media operations.",
+            "AI campaign operations are moving into live media buying decisions.",
+            companies=["Omnicom"],
+        ),
+        _market_watch_candidate(
+            "Overwolf Ads Launches Gamer Grid",
+            "Overwolf Ads launched Gamer Grid for PC gaming audience targeting using deterministic gameplay behavior and hardware signals.",
+            "Timely for game launches and gaming ad growth.",
+            companies=["Overwolf Ads"],
+        ),
+    ]
+    report = build_report(items, config)
+    markdown = render_markdown(report)
+    message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-04", markdown, "daily")
+    assert len(report.daily_digest_items) >= 3
+    assert report.diagnostics["selected_digest_items_count"] >= 3
+    assert "<b>Top market signals</b>" in message
+    assert "1." in message and "2." in message and "3." in message
+
+
+def test_overwolf_not_selected_when_three_stronger_market_watch_candidates_exist() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="balanced", daily_digest_target=4),
+        topics=(Topic(id="mw", label="Market Watch", query="market watch"),),
+        sources=SourceConfig(high_signal_domains=("example.com",), fresh_priority_domains=("example.com",)),
+    )
+    items = [
+        _market_watch_candidate(
+            "Overwolf Ads Launches Gamer Grid",
+            "Overwolf Ads launched Gamer Grid for PC gaming audience targeting using deterministic gameplay behavior and hardware signals.",
+            "Timely for game launches and gaming ad growth.",
+            companies=["Overwolf Ads"],
+        ),
+        _market_watch_candidate(
+            "AppsFlyer updates SKAN measurement workflow",
+            "AppsFlyer updated SKAN and attribution guidance for app marketers using Privacy Sandbox and MMP workflows.",
+            "Measurement teams need this change for live attribution decisions.",
+            companies=["AppsFlyer"],
+        ),
+        _market_watch_candidate(
+            "Moloco launches performance CTV for app marketers",
+            "Moloco launched performance CTV with connected TV campaign optimization, install outcomes, and measurable ROI across streaming inventory.",
+            "CTV is being used like performance media rather than reach-only media.",
+            companies=["Moloco"],
+        ),
+        _market_watch_candidate(
+            "Omnicom rolls out agentic media buying workflow",
+            "Omnicom rolled out AI media buying and campaign optimization workflows for live media operations.",
+            "AI campaign operations are moving into live media buying decisions.",
+            companies=["Omnicom"],
+        ),
+    ]
+    report = build_report(items, config)
+    titles = [item.title for item in report.daily_digest_items]
+    assert all("Overwolf" not in title for title in titles)
+
+
+def test_digest_synthesis_appears_when_multiple_items_selected() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="balanced", daily_digest_target=4),
+        topics=(Topic(id="mw", label="Market Watch", query="market watch"),),
+        sources=SourceConfig(high_signal_domains=("example.com",), fresh_priority_domains=("example.com",)),
+    )
+    items = [
+        _market_watch_candidate(
+            "AppsFlyer updates SKAN measurement workflow",
+            "AppsFlyer updated SKAN and attribution guidance for app marketers using Privacy Sandbox and MMP workflows.",
+            "Measurement teams need this change for live attribution decisions.",
+            companies=["AppsFlyer"],
+        ),
+        _market_watch_candidate(
+            "Omnicom rolls out agentic media buying workflow",
+            "Omnicom rolled out AI media buying and campaign optimization workflows for live media operations.",
+            "AI campaign operations are moving into live media buying decisions.",
+            companies=["Omnicom"],
+        ),
+    ]
+    report = build_report(items, config)
+    markdown = render_markdown(report)
+    assert report.what_this_suggests
+    assert report.bidmatrix_angles
+    assert report.watch_next_items
+    assert "## What This Suggests" in markdown
+    assert "## BidMatrix Angles" in markdown
+    assert "## Watch Next" in markdown
+
+
+def test_one_item_brief_only_happens_when_one_candidate_exists() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="balanced", daily_digest_target=4),
+        topics=(Topic(id="mw", label="Market Watch", query="market watch"),),
+        sources=SourceConfig(high_signal_domains=("example.com",), fresh_priority_domains=("example.com",)),
+    )
+    item = _market_watch_candidate(
+        "LoopMe launches Chartboost Direct",
+        "LoopMe launched Chartboost Direct to bring direct brand demand into mobile apps with curated marketplace and PMP workflows.",
+        "Brand budgets are moving into curated in-app inventory and premium publisher monetization.",
+        companies=["LoopMe", "Chartboost"],
+    )
+    report = build_report([item], config)
+    assert len(report.daily_digest_items) == 1
+    assert report.diagnostics["selected_digest_items_count"] == 1
