@@ -47,7 +47,9 @@ def main() -> None:
             print(f"Exa error for {topic.label}: {exc}")
         exa_errors.extend(client.pop_errors())
 
-    if client.should_run_market_watch_recent():
+    report = build_report(items, config, exa_errors=exa_errors, exa_meta=client.collection_stats())
+
+    if report.diagnostics.get("selected_top_signals_count", 0) == 0 and not report.adjacent_watchlist and client.should_run_market_watch_recent():
         print("Searching: Market Watch fallback")
         try:
             items.extend(client.search_market_watch_recent())
@@ -56,8 +58,10 @@ def main() -> None:
             exa_errors.append(message)
             print(f"Exa error for market_watch_recent: {exc}")
         exa_errors.extend(client.pop_errors())
+        report = build_report(items, config, exa_errors=exa_errors, exa_meta=client.collection_stats())
+    elif report.diagnostics.get("selected_top_signals_count", 0) == 0 and not report.adjacent_watchlist and client.collection_stats().get("exa_budget_exceeded"):
+        report = build_report(items, config, exa_errors=exa_errors, exa_meta=client.collection_stats())
 
-    report = build_report(items, config, exa_errors=exa_errors)
     report.diagnostics.update(client.collection_stats())
     markdown_path, json_path, curated_json_path = write_report(report, Path(config.outputs.report_dir))
     print(f"Wrote {markdown_path}")

@@ -244,7 +244,7 @@ class ExaMonitorClient:
         return collected[: settings.max_total_results_per_market_watch]
 
     def should_run_market_watch_recent(self) -> bool:
-        return self._fresh_items_collected < 2 and not self._budget_exceeded()
+        return self._query_counts.get("market_watch_recent", 0) == 0 and not self._budget_exceeded()
 
     def pop_errors(self) -> list[str]:
         errors = list(self._last_errors)

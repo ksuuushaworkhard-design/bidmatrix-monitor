@@ -28,7 +28,12 @@ def dedupe_items(items: list[NewsItem], config: MonitorConfig | None = None) -> 
     return sorted(deduped, key=lambda item: (-item.final_score, -item.relevance_score, item.topic_label, item.title.lower()))
 
 
-def build_report(items: list[NewsItem], config: MonitorConfig, exa_errors: list[str] | None = None) -> MonitorReport:
+def build_report(
+    items: list[NewsItem],
+    config: MonitorConfig,
+    exa_errors: list[str] | None = None,
+    exa_meta: dict | None = None,
+) -> MonitorReport:
     deduped = dedupe_items(items, config)
     thresholds = _sensitivity_thresholds(config)
     fresh_candidates = [
@@ -61,6 +66,7 @@ def build_report(items: list[NewsItem], config: MonitorConfig, exa_errors: list[
     background_items = all_background_items if (daily_signals or adjacent_watchlist) else []
     report_items = _unique_items(curated + background_items + adjacent_watchlist)
     diagnostics = _diagnostics(items, deduped, curated, background_items, thresholds)
+    diagnostics.update(exa_meta or {})
     diagnostics["kept_core_signals"] = len(core_curated)
     diagnostics["kept_adjacent_signals"] = len(adjacent_curated)
     diagnostics["selected_top_signals_count"] = len(daily_signals)
@@ -92,6 +98,7 @@ def build_report(items: list[NewsItem], config: MonitorConfig, exa_errors: list[
             background_items,
             diagnostics["exa_errors"],
             fallback_level_used,
+            diagnostics,
         ),
         daily_signals=daily_signals,
         adjacent_watchlist=adjacent_watchlist,
@@ -145,6 +152,10 @@ def _select_daily_content(
     broader_recent = _recent_market_watch_items(deduped, thresholds, target=3)
     if broader_recent:
         return [], broader_recent, "market_watch_14d"
+
+    older_recent = _best_available_recent_items(deduped, target=3)
+    if older_recent:
+        return [], older_recent, "market_watch_best_available"
 
     return [], [], "empty"
 
@@ -200,17 +211,27 @@ def _daily_intro(
     background_items: list[NewsItem],
     exa_errors: list[str],
     fallback_level_used: str,
+    diagnostics: dict,
 ) -> str:
     count = len(daily_signals)
     if count:
         noun = 'signal' if count == 1 else 'signals'
         return f'Found {count} core {noun} worth attention today.'
     if adjacent_watchlist:
+        if fallback_level_used == "market_watch_best_available":
+            return (
+                "Exa returned results, but no fresh BidMatrix-core items passed the filters. "
+                "Here are the strongest recent relevant items available."
+            )
         return 'No direct core BidMatrix signal dominated today, so this brief uses the strongest adjacent industry signals worth monitoring.'
-    if not raw_items or exa_errors:
+    if not raw_items:
         return (
             "Market brief monitor ran, but no Exa results were available. "
             "Please check EXA_API_KEY, Exa response logs, or source/query configuration."
+        )
+    if diagnostics.get("exa_budget_exceeded"):
+        return (
+            "Exa returned results, but the fallback search budget was reached before additional market-watch queries could run."
         )
     if curated or background_items or fallback_level_used == "empty":
         return (
@@ -310,15 +331,28 @@ def _telegram_message_state(
     raw_items: list[NewsItem],
     exa_errors: list[str],
 ) -> str:
-    if exa_errors or not raw_items:
-        return "error"
+    if not raw_items:
+        return "monitor_error"
     if daily_signals:
         return "core"
     if adjacent_watchlist:
-        return "market_watch"
+        return "adjacent" if not any(item.relevance_tier == "core" for item in adjacent_watchlist) else "market_watch"
     if raw_items:
-        return "background" if background_items else "filtered_empty"
+        return "filtered_empty"
     return "empty"
+
+
+def _best_available_recent_items(items: list[NewsItem], target: int) -> list[NewsItem]:
+    candidates = [
+        item
+        for item in items
+        if item.relevance_tier in {"core", "adjacent"}
+        and item.confidence in {"high", "medium"}
+    ]
+    return sorted(
+        _unique_items(candidates),
+        key=lambda item: (-item.final_score, -item.freshness_confidence, item.title.lower()),
+    )[:target]
 
 
 def _score_item(item: NewsItem, config: MonitorConfig | None) -> NewsItem:

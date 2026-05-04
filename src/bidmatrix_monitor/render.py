@@ -37,7 +37,7 @@ def render_markdown(report: MonitorReport) -> str:
         lines.extend(["", "## Market Watch"])
         lines.extend(_adjacent_watchlist_cards(report.adjacent_watchlist))
     background_lines = _background_context(report)
-    if background_lines and (report.daily_signals or report.adjacent_watchlist):
+    if background_lines and report.daily_signals:
         lines.extend([
             "",
             "## Strategic Context",

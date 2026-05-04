@@ -626,7 +626,7 @@ def test_no_raw_results_uses_exa_unavailable_message() -> None:
     )
     report = build_report([], config)
     assert "no Exa results were available" in report.daily_intro
-    assert report.diagnostics["telegram_message_state"] == "error"
+    assert report.diagnostics["telegram_message_state"] == "monitor_error"
 
 
 def test_exa_zero_results_telegram_uses_monitor_error() -> None:
@@ -733,7 +733,7 @@ def test_exa_client_skips_market_watch_when_fresh_layer_is_sufficient() -> None:
 
     assert [item.title for item in items] == ["One", "Two", "Three"]
     assert called_layers == ["daily_fresh_signals", "strategic_background"]
-    assert client.should_run_market_watch_recent() is False
+    assert client.should_run_market_watch_recent() is True
 
 
 def test_adjacent_only_signals_render_watchlist_without_strategic_context() -> None:
@@ -899,6 +899,7 @@ def test_all_exa_requests_timeout_produces_monitor_error_without_placeholder() -
     assert "no Exa results were available" in markdown
     assert "Strategic Context" not in markdown
     assert "Background context, not a fresh daily signal." not in markdown
+    assert report.diagnostics["telegram_message_state"] == "monitor_error"
 
 
 def test_market_watch_recent_timeout_does_not_block_final_rendering() -> None:
@@ -956,3 +957,120 @@ def test_market_watch_recent_timeout_does_not_crash_daily_run() -> None:
     items = client.search_market_watch_recent()
     assert items == []
     assert client.pop_errors()
+
+
+def test_raw_results_with_all_items_filtered_by_freshness_use_market_watch_not_monitor_error() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="balanced"),
+        topics=(Topic(id="m", label="Measurement", query="measurement"),),
+        sources=SourceConfig(high_signal_domains=("example.com",), fresh_priority_domains=("example.com",)),
+    )
+    items = [
+        NewsItem(
+            topic_id="m",
+            topic_label="Measurement",
+            title="AppsFlyer attribution update",
+            url="https://example.com/appsflyer-update",
+            published_date=(date.today() - timedelta(days=30)).isoformat(),
+            summary="AppsFlyer updated attribution guidance for app marketers.",
+            why_it_matters="It affects measurement decisions for mobile teams.",
+            mentioned_companies=["AppsFlyer"],
+            relevance_score=5,
+        ),
+        NewsItem(
+            topic_id="m",
+            topic_label="Measurement",
+            title="Adjust SKAN notes",
+            url="https://example.com/adjust-skan",
+            published_date=(date.today() - timedelta(days=20)).isoformat(),
+            summary="Adjust published SKAN guidance for advertisers.",
+            why_it_matters="It affects attribution workflows.",
+            mentioned_companies=["Adjust"],
+            relevance_score=5,
+        ),
+    ]
+    report = build_report(
+        items,
+        config,
+        exa_meta={
+            "raw_items_found": 25,
+            "parsed_signals_count": 13,
+            "filtered_out_by_freshness": 13,
+            "exa_total_raw_results": 25,
+            "exa_market_watch_queries_run": 0,
+        },
+    )
+    markdown = render_markdown(report)
+    assert report.diagnostics["selected_top_signals_count"] == 0
+    assert report.diagnostics["telegram_message_state"] in {"adjacent", "market_watch"}
+    assert report.diagnostics["fallback_level_used"] == "market_watch_best_available"
+    assert "no Exa results were available" not in report.daily_intro
+    assert "## Market Watch" in markdown
+
+
+def test_raw_results_exist_never_use_monitor_error_message() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="balanced"),
+        topics=(Topic(id="a", label="Adtech", query="adtech"),),
+    )
+    item = NewsItem(
+        topic_id="a",
+        topic_label="Adtech",
+        title="Older signal",
+        url="https://example.com/older-signal",
+        published_date=(date.today() - timedelta(days=40)).isoformat(),
+        summary="Older but relevant mobile adtech signal.",
+        why_it_matters="Still useful as recent context.",
+        mentioned_companies=["ExampleCo"],
+        relevance_score=5,
+    )
+    report = build_report([item], config, exa_errors=["one layer timed out"])
+    assert "no Exa results were available" not in report.daily_intro
+    assert report.diagnostics["telegram_message_state"] != "monitor_error"
+
+
+def test_telegram_does_not_claim_no_exa_results_when_raw_results_exist() -> None:
+    markdown = """# BidMatrix Daily Brief - 2026-05-04
+
+## Today's Useful Signals
+Exa returned results, but no fresh BidMatrix-core items passed the filters. Here are the strongest recent relevant items available.
+
+## Market Watch
+### 1. AppsFlyer — updated attribution guidance for app marketers
+- Why it may matter: Measurement teams still need the update even though it is not a same-day signal.
+- BidMatrix use: Useful background for attribution positioning.
+- Source: [AppsFlyer attribution update](https://example.com/appsflyer-update) - example.com - Date: 2026-04-04
+"""
+    message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-04", markdown, "daily")
+    assert "<b>Monitor error</b>" not in message
+    assert "<b>Market Watch</b>" in message
+
+
+def test_budget_reached_message_is_not_monitor_error() -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5),
+        topics=(Topic(id="a", label="Adtech", query="adtech"),),
+    )
+    item = NewsItem(
+        topic_id="a",
+        topic_label="Adtech",
+        title="Older signal",
+        url="https://example.com/older-signal",
+        published_date=(date.today() - timedelta(days=40)).isoformat(),
+        summary="Older but relevant mobile adtech signal.",
+        why_it_matters="Still useful as recent context.",
+        mentioned_companies=["ExampleCo"],
+        relevance_score=5,
+    )
+    report = build_report([item], config, exa_meta={"exa_budget_exceeded": True})
+    assert "fallback search budget was reached" in report.daily_intro
+    assert report.diagnostics["telegram_message_state"] != "monitor_error"
