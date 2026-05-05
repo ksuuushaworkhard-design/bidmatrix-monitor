@@ -93,7 +93,12 @@ def _telegram_message(subject: str, text: str, report_type: str) -> str:
             else:
                 lines.extend(["", "<b>Market Watch</b>", "No major core BidMatrix signal dominated today, but several relevant market moves are worth tracking."])
         else:
-            if selection_meta["fresh_7d_count"] and not selection_meta["recent_14d_count"] and not selection_meta["recent_30d_count"] and not selection_meta["unknown_trusted_count"]:
+            if core_count > 0 and adjacent_count > 0:
+                intro = (
+                    f"Found {core_count} core signal{'s' if core_count != 1 else ''}, "
+                    f"supplemented with {adjacent_count} adjacent/recent market signal{'s' if adjacent_count != 1 else ''}."
+                )
+            elif selection_meta["fresh_7d_count"] and not selection_meta["recent_14d_count"] and not selection_meta["recent_30d_count"] and not selection_meta["unknown_trusted_count"]:
                 intro = f"Found {selection_meta['fresh_7d_count']} fresh BidMatrix-relevant signal{'s' if selection_meta['fresh_7d_count'] != 1 else ''} worth attention today."
             elif selection_meta["fresh_7d_count"]:
                 intro = f"Found {selection_meta['fresh_7d_count']} fresh signal{'s' if selection_meta['fresh_7d_count'] != 1 else ''}, supplemented with recent market context."
@@ -101,8 +106,6 @@ def _telegram_message(subject: str, text: str, report_type: str) -> str:
                 intro = "Fresh dated signals were limited, so this digest includes trusted recent market context."
             elif "supplemented with" in intro_line.lower():
                 intro = intro_line
-            elif adjacent_count:
-                intro = f"Found {core_count} fresh core signal{'s' if core_count != 1 else ''} and added {adjacent_count} adjacent market signal{'s' if adjacent_count != 1 else ''} for context."
             else:
                 intro = f"Found {core_count} BidMatrix-relevant signal{'s' if core_count != 1 else ''} worth attention today."
             lines.extend(["", "<b>Today's useful signals</b>", html.escape(_sync_intro_count(intro, len(digest_items)))])
@@ -681,9 +684,17 @@ def _telegram_daily_priority(item: dict[str, str]) -> int:
 
 def _telegram_affects_line(item: dict[str, str]) -> str:
     bucket = _telegram_daily_bucket(item)
+    title = item.get("title", "").lower()
+    happened = item.get("what_happened", "").lower()
+    source = item.get("source", "").lower()
+    text = " ".join([title, happened, source])
+    if any(term in text for term in ("tiktok", "vistar", "dooh", "billboard", "out-of-home")):
+        return "Cross-screen creative execution, DOOH media, and potential future app-campaign measurement."
+    if any(term in text for term in ("fraud report", "state of fraud", "ivt", "invalid traffic", "fraud")):
+        return "Traffic quality, fraud detection, IVT risk, channel quality, and verified acquisition sources."
     affects = {
         "measurement": "Attribution, MMP workflows, and privacy-safe measurement.",
-        "fraud": "Traffic quality, IVT detection, and verified acquisition sources.",
+        "fraud": "Traffic quality, fraud detection, IVT risk, channel quality, and verified acquisition sources.",
         "ctv": "CTV as performance media for app marketers and cross-screen measurement.",
         "ai_ops": "AI media buying, campaign optimization, and automated decision support.",
         "programmatic_supply": "Programmatic supply paths, in-app inventory access, and DSP or SSP infrastructure.",

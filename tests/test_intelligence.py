@@ -2545,3 +2545,62 @@ Found 1 core signal worth attention today.
     message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-05", markdown, "daily")
     assert "BidMatrix-relevant signal worth attention" not in message
     assert "adjacent market signal" in message or "adjacent market signal is worth watching" in message
+
+
+def test_tiktok_dooh_gets_cross_screen_affects_line() -> None:
+    markdown = """# BidMatrix Daily Brief - 2026-05-05
+
+## Today's Useful Signals
+Found 1 core signal worth attention today.
+
+## Top Market Signals
+### 1. TikTok x Vistar Media
+- What happened: TikTok partnered with Vistar Media to reformat vertical ads into DOOH billboards.
+- Why it matters: Published 2026-05-04 as cross-screen creative execution expands.
+- BidMatrix angle: Broad cross-screen context; relevant only if DOOH becomes measurable for app campaigns or retargeting.
+- Source: [TikTok x Vistar](https://example.com/tiktok) - digiday.com (high-signal) - Date: 2026-05-04 - confidence: high
+"""
+    message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-05", markdown, "daily")
+    assert "Cross-screen creative execution, DOOH media, and potential future app-campaign measurement." in message
+    assert "Programmatic supply paths, in-app inventory access, and DSP or SSP infrastructure." not in message
+
+
+def test_appsflyer_fraud_gets_fraud_affects_line() -> None:
+    markdown = """# BidMatrix Daily Brief - 2026-05-05
+
+## Today's Useful Signals
+Found 1 core signal worth attention today.
+
+## Top Market Signals
+### 1. AppsFlyer fraud report
+- What happened: AppsFlyer released a fraud report covering fraud risk, channel quality, verified traffic, and IVT patterns.
+- Why it matters: Published 2026-05-03 as app marketers face rising fraud pressure.
+- BidMatrix angle: Strengthens BidMatrix positioning around quality traffic, safer in-app inventory, and performance protection.
+- Source: [AppsFlyer](https://example.com/fraud) - appsflyer.com (high-signal) - Date: 2026-05-03 - confidence: high
+"""
+    message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-05", markdown, "daily")
+    assert "Traffic quality, fraud detection, IVT risk, channel quality, and verified acquisition sources." in message
+    assert "Attribution, MMP workflows, and privacy-safe measurement." not in message
+
+
+def test_mixed_core_and_adjacent_digest_gets_honest_intro() -> None:
+    markdown = """# BidMatrix Daily Brief - 2026-05-05
+
+## Today's Useful Signals
+Found 1 core signal worth attention, supplemented with 1 recent market signal for context.
+
+## Top Market Signals
+### 1. TikTok x Vistar Media
+- What happened: TikTok partnered with Vistar Media to reformat vertical ads into DOOH billboards.
+- Why it matters: Published 2026-05-04 as cross-screen creative execution expands.
+- BidMatrix angle: Broad cross-screen context; relevant only if DOOH becomes measurable for app campaigns or retargeting.
+- Source: [TikTok x Vistar](https://example.com/tiktok) - digiday.com (high-signal) - Date: 2026-05-04 - confidence: high
+### 2. AppsFlyer fraud report
+- What happened: AppsFlyer released a fraud report covering fraud risk, channel quality, verified traffic, and IVT patterns.
+- Why it matters: Published 2026-04-23 as app marketers face rising fraud pressure.
+- BidMatrix angle: Strengthens BidMatrix positioning around quality traffic, safer in-app inventory, and performance protection.
+- Source: [AppsFlyer](https://example.com/fraud) - appsflyer.com (high-signal) - Date: 2026-04-23 - confidence: medium
+"""
+    message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-05", markdown, "daily")
+    assert "Found 1 core signal, supplemented with 1 adjacent/recent market signal." in message
+    assert "Found 1 fresh signal, supplemented with recent market context." not in message
