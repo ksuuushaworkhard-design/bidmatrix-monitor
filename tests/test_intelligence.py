@@ -2361,7 +2361,7 @@ Found 1 core signal worth attention, supplemented with 2 recent market signals f
 - Source: [LoopMe](https://example.com/loopme) - exchangewire.com (high-signal) - Date: 2026-04-24 - confidence: high
 """
     message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-05", markdown, "daily")
-    assert "supplemented with" in message
+    assert "Fresh signals were limited, so today’s digest uses the strongest recent market context." in message
     assert "Moloco performance CTV" in message or "Unity x Index Exchange" in message
     assert "LoopMe" in message
 
@@ -2602,5 +2602,72 @@ Found 1 core signal worth attention, supplemented with 1 recent market signal fo
 - Source: [AppsFlyer](https://example.com/fraud) - appsflyer.com (high-signal) - Date: 2026-04-23 - confidence: medium
 """
     message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-05", markdown, "daily")
-    assert "Found 1 core signal, supplemented with 1 adjacent/recent market signal." in message
-    assert "Found 1 fresh signal, supplemented with recent market context." not in message
+    assert "Found 1 fresh signal, supplemented with 1 recent market context item." in message
+    assert "Found 1 core signal, supplemented with 1 adjacent/recent market signal." not in message
+
+
+def test_all_recent_context_items_get_recent_context_intro() -> None:
+    markdown = """# BidMatrix Daily Brief - 2026-05-05
+
+## Today's Useful Signals
+Found 2 BidMatrix-relevant signals worth attention today.
+
+## Top Market Signals
+### 1. Moloco performance CTV
+- What happened: Moloco launched performance CTV with MMP attribution and measurable ROI across streaming inventory.
+- Why it matters: Published 2026-04-22 as app marketers push CTV toward measurable performance outcomes.
+- BidMatrix angle: Gives BidMatrix a concrete angle on transparent CTV, verified environments, and performance measurement beyond impressions.
+- Source: [Moloco](https://example.com/moloco) - moloco.com (high-signal) - Date: 2026-04-22 - confidence: high
+### 2. OpenAI conversion tracking
+- What happened: OpenAI added a conversion tracking pixel to help advertisers measure conversions across ChatGPT ad experiences.
+- Why it matters: Published 2026-04-16 as AI-native ad platforms move toward measurable performance accountability.
+- BidMatrix angle: Supports BidMatrix positioning around attribution resilience and cleaner performance decision-making.
+- Source: [OpenAI](https://example.com/openai) - digiday.com (high-signal) - Date: 2026-04-16 - confidence: high
+"""
+    message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-05", markdown, "daily")
+    assert "Fresh signals were limited, so today’s digest uses the strongest recent market context." in message
+    assert "worth attention today" not in message
+
+
+def test_openai_conversion_tracking_gets_ai_platform_measurement_mapping() -> None:
+    markdown = """# BidMatrix Daily Brief - 2026-05-05
+
+## Today's Useful Signals
+Found 1 core signal worth attention today.
+
+## Top Market Signals
+### 1. OpenAI conversion tracking
+- What happened: OpenAI added a conversion tracking pixel to help advertisers measure conversions across ChatGPT ad experiences.
+- Why it matters: Published 2026-04-16 as AI-native ad platforms move toward measurable performance accountability.
+- BidMatrix angle: Supports BidMatrix positioning around attribution resilience and cleaner performance decision-making.
+- Source: [OpenAI](https://example.com/openai) - digiday.com (high-signal) - Date: 2026-04-16 - confidence: high
+"""
+    message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-05", markdown, "daily")
+    assert "Ad measurement, conversion tracking, and performance accountability for AI-native ad platforms." in message
+    assert "Useful as broader context: AI platforms are moving toward measurable advertising, which reinforces the need for attribution clarity and performance safeguards." in message
+    assert "Attribution, MMP workflows, and privacy-safe measurement." not in message
+
+
+def test_telegram_cleanup_removes_dangling_fragments() -> None:
+    markdown = """# BidMatrix Daily Brief - 2026-05-05
+
+## Today's Useful Signals
+Found 2 BidMatrix-relevant signals worth attention today.
+
+## Top Market Signals
+### 1. OpenAI ad measurement update to enable
+- What happened: OpenAI added a conversion tracking pixel (e.g.
+- Why it matters: Published 2026-04-16 as AI-native ad platforms move toward measurable performance accountability.
+- BidMatrix angle: Supports BidMatrix positioning around attribution resilience and cleaner performance decision-making.
+- Source: [OpenAI](https://example.com/openai) - digiday.com (high-signal) - Date: 2026-04-16 - confidence: high
+### 2. Moloco performance CTV
+- What happened: Moloco launched performance CTV to enable
+- Why it matters: Published 2026-04-22 as app marketers push CTV toward measurable performance outcomes.
+- BidMatrix angle: Gives BidMatrix a concrete angle on transparent CTV, verified environments, and performance measurement beyond impressions.
+- Source: [Moloco](https://example.com/moloco) - moloco.com (high-signal) - Date: 2026-04-22 - confidence: high
+"""
+    message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-05", markdown, "daily")
+    assert "to enable." not in message
+    assert "e.g." not in message
+    assert "(e.g." not in message
+    assert "(\n" not in message

@@ -93,15 +93,25 @@ def _telegram_message(subject: str, text: str, report_type: str) -> str:
             else:
                 lines.extend(["", "<b>Market Watch</b>", "No major core BidMatrix signal dominated today, but several relevant market moves are worth tracking."])
         else:
-            if core_count > 0 and adjacent_count > 0:
+            recent_context_count = (
+                selection_meta["recent_14d_count"]
+                + selection_meta["recent_30d_count"]
+                + selection_meta["unknown_trusted_count"]
+            )
+            if not selection_meta["fresh_7d_count"] and recent_context_count:
+                intro = "Fresh signals were limited, so today’s digest uses the strongest recent market context."
+            elif selection_meta["fresh_7d_count"] and recent_context_count:
+                intro = (
+                    f"Found {selection_meta['fresh_7d_count']} fresh signal{'s' if selection_meta['fresh_7d_count'] != 1 else ''}, "
+                    f"supplemented with {recent_context_count} recent market context item{'s' if recent_context_count != 1 else ''}."
+                )
+            elif core_count > 0 and adjacent_count > 0:
                 intro = (
                     f"Found {core_count} core signal{'s' if core_count != 1 else ''}, "
                     f"supplemented with {adjacent_count} adjacent/recent market signal{'s' if adjacent_count != 1 else ''}."
                 )
             elif selection_meta["fresh_7d_count"] and not selection_meta["recent_14d_count"] and not selection_meta["recent_30d_count"] and not selection_meta["unknown_trusted_count"]:
                 intro = f"Found {selection_meta['fresh_7d_count']} fresh BidMatrix-relevant signal{'s' if selection_meta['fresh_7d_count'] != 1 else ''} worth attention today."
-            elif selection_meta["fresh_7d_count"]:
-                intro = f"Found {selection_meta['fresh_7d_count']} fresh signal{'s' if selection_meta['fresh_7d_count'] != 1 else ''}, supplemented with recent market context."
             elif selection_meta["unknown_trusted_count"]:
                 intro = "Fresh dated signals were limited, so this digest includes trusted recent market context."
             elif "supplemented with" in intro_line.lower():
@@ -425,7 +435,7 @@ def _telegram_daily_news_item(item: dict[str, str], index: int) -> list[str]:
         "<b>What it affects</b>",
         html.escape(_telegram_affects_line(item)),
         "<b>Why it matters for BidMatrix</b>",
-        html.escape(_executive_line(item.get("bidmatrix_angle") or item.get("content_angle") or item["title"], 170)),
+        html.escape(_telegram_bidmatrix_line(item)),
         "<b>Source</b>",
         html.escape(_source_name(item)),
     ]
@@ -688,6 +698,8 @@ def _telegram_affects_line(item: dict[str, str]) -> str:
     happened = item.get("what_happened", "").lower()
     source = item.get("source", "").lower()
     text = " ".join([title, happened, source])
+    if any(term in text for term in ("openai", "chatgpt")) and any(term in text for term in ("conversion", "tracking", "pixel")):
+        return "Ad measurement, conversion tracking, and performance accountability for AI-native ad platforms."
     if any(term in text for term in ("tiktok", "vistar", "dooh", "billboard", "out-of-home")):
         return "Cross-screen creative execution, DOOH media, and potential future app-campaign measurement."
     if any(term in text for term in ("fraud report", "state of fraud", "ivt", "invalid traffic", "fraud")):
@@ -705,6 +717,16 @@ def _telegram_affects_line(item: dict[str, str]) -> str:
     if item.get("section") == "adjacent" and not affects.endswith("Adjacent context."):
         return f"{affects} Adjacent context."
     return affects
+
+
+def _telegram_bidmatrix_line(item: dict[str, str]) -> str:
+    title = item.get("title", "").lower()
+    happened = item.get("what_happened", "").lower()
+    source = item.get("source", "").lower()
+    text = " ".join([title, happened, source])
+    if any(term in text for term in ("openai", "chatgpt")) and any(term in text for term in ("conversion", "tracking", "pixel")):
+        return "Useful as broader context: AI platforms are moving toward measurable advertising, which reinforces the need for attribution clarity and performance safeguards."
+    return _executive_line(item.get("bidmatrix_angle") or item.get("content_angle") or item["title"], 170)
 
 
 def _is_market_watch_intro(intro: str) -> bool:
@@ -791,9 +813,13 @@ def _clean_trailing_fragment(text: str) -> str:
     original = text.rstrip()
     terminal = '?' if original.endswith('?') else '!' if original.endswith('!') else ''
     cleaned = text.rstrip(',;:.!?- ')
+    cleaned = re.sub(r"\(\s*e\.?g\.?\s*$", "", cleaned, flags=re.IGNORECASE).rstrip(' ,;:.!?-')
+    cleaned = re.sub(r"\(\s*$", "", cleaned).rstrip(' ,;:.!?-')
+    cleaned = re.sub(r"\be\.?g\.?\s*$", "", cleaned, flags=re.IGNORECASE).rstrip(' ,;:.!?-')
     trailing_phrases = [
         'built on', 'based on', 'real-time', 'real time', 'using', 'allowing',
-        'including', 'against', 'across', 'into', 'for', 'with', 'but', 'and'
+        'including', 'against', 'across', 'into', 'for', 'with', 'but', 'and',
+        'to enable', 'to support', 'to help', 'such as', 'like'
     ]
     lower = cleaned.lower()
     removed_fragment = False
