@@ -353,8 +353,8 @@ def test_weekly_pr_angle_is_not_date_only_and_not_clipped() -> None:
 
 
 
-def test_daily_telegram_message_includes_top_signal_fields() -> None:
-    markdown = """# BidMatrix Daily Brief - 2026-04-29
+def test_daily_telegram_message_uses_short_news_digest_fields() -> None:
+    markdown = """# BidMatrix Daily Brief - 2026-05-05
 
 ## Today's Useful Signal
 Found 1 core signal worth attention today.
@@ -368,16 +368,19 @@ Found 1 core signal worth attention today.
 - Content angle: AI in user acquisition is starting to decide which creatives deserve budget.
 - Action: Track whether creative intelligence vendors integrate more directly with media buying platforms.
 - Watch next: Track whether creative intelligence vendors integrate more directly with media buying platforms.
-- Source: [DAIVID & ADIN.AI Partner](https://example.com/daivid) - exchangewire.com (high-signal) - confidence: high
+- Source: [DAIVID & ADIN.AI Partner](https://example.com/daivid) - exchangewire.com (high-signal) - Date: 2026-05-04 - confidence: high
 
     """
-    message = _telegram_message("BidMatrix Daily Market Brief - 2026-04-29", markdown, "daily")
-    assert "Top market signal" in message
-    assert "Why it matters" in message
-    assert "BidMatrix angle" in message
-    assert "Action" in message
+    message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-05", markdown, "daily")
+    assert "Top market news" in message
+    assert "What happened" in message
+    assert "What it affects" in message
+    assert "Why it matters for BidMatrix" in message
     assert "Source" in message
     assert "https://example.com/daivid" in message
+    assert "What this suggests" not in message
+    assert "BidMatrix angles" not in message
+    assert "Watch next" not in message
 
 
 def test_overwolf_gamer_grid_is_adjacent_not_core() -> None:
@@ -437,10 +440,10 @@ def test_telegram_top_signals_only_include_core_items() -> None:
     )
     report = build_report([core, adjacent], config)
     markdown = render_markdown(report)
-    message = _telegram_message("BidMatrix Daily Market Brief - 2026-04-29", markdown, "daily")
+    message = _telegram_message(f"BidMatrix Daily Market Brief - {report.run_date.isoformat()}", markdown, "daily")
     assert "AppsFlyer" in message
     assert "Overwolf Ads" in message
-    assert "supplemented with" in message
+    assert "<b>Top market news</b>" in message
 
 
 def test_no_core_signals_message_includes_adjacent_watchlist() -> None:
@@ -465,8 +468,7 @@ def test_no_core_signals_message_includes_adjacent_watchlist() -> None:
     )
     report = build_report([adjacent], config)
     markdown = render_markdown(report)
-    message = _telegram_message("BidMatrix Daily Market Brief - 2026-04-29", markdown, "daily")
-    assert "No direct core BidMatrix signal dominated today" in message
+    message = _telegram_message(f"BidMatrix Daily Market Brief - {report.run_date.isoformat()}", markdown, "daily")
     assert "Market Watch" in message
     assert "Overwolf Ads" in message
     assert "indirect" in message.lower()
@@ -498,7 +500,7 @@ def test_bidmatrix_angle_is_complete_for_core_signal() -> None:
 
 
 def test_no_broken_fragment_in_telegram_preview() -> None:
-    markdown = """# BidMatrix Daily Brief - 2026-04-29
+    markdown = """# BidMatrix Daily Brief - 2026-05-05
 
 ## Today's Useful Signal
 Today's brief uses the best relevant signals from the last 72 hours.
@@ -552,22 +554,22 @@ Found 2 core signals worth attention today.
 - BidMatrix angle: A.
 - Content angle: A.
 - Action: A.
-- Source: [One](https://example.com/1) - example.com - confidence: high
+- Source: [One](https://example.com/1) - example.com - Date: 2026-05-04 - confidence: high
 ### 2. Signal Two — B
 - What happened: B.
 - Why it matters: B.
 - BidMatrix angle: B.
 - Content angle: B.
 - Action: B.
-- Source: [Two](https://example.com/2) - example.com - confidence: medium
+- Source: [Two](https://example.com/2) - example.com - Date: 2026-05-03 - confidence: medium
 """
-    message = _telegram_message('BidMatrix Daily Market Brief - 2026-04-29', markdown, 'daily')
-    assert 'Found 2 core signals worth attention today.' in message
-    assert '<b>Top market signals</b>' in message
+    message = _telegram_message('BidMatrix Daily Market Brief - 2026-05-05', markdown, 'daily')
+    assert 'Found 2 BidMatrix-relevant signals worth attention today.' in message
+    assert '<b>Top market news</b>' in message
 
 
 def test_low_confidence_items_are_not_rendered_as_top_signals() -> None:
-    markdown = """# BidMatrix Daily Brief - 2026-04-29
+    markdown = """# BidMatrix Daily Brief - 2026-05-05
 
 ## Today's Useful Signals
 Found 2 core signals worth attention today.
@@ -579,19 +581,19 @@ Found 2 core signals worth attention today.
 - BidMatrix angle: A.
 - Content angle: A.
 - Action: A.
-- Source: [One](https://example.com/1) - example.com - confidence: high
+- Source: [One](https://example.com/1) - example.com - Date: 2026-05-04 - confidence: high
 ### 2. Weak Signal — B
 - What happened: B.
 - Why it matters: B.
 - BidMatrix angle: B.
 - Content angle: B.
 - Action: B.
-- Source: [Two](https://example.com/2) - example.com - confidence: low
+- Source: [Two](https://example.com/2) - example.com - Date: 2026-05-03 - confidence: low
 """
-    message = _telegram_message('BidMatrix Daily Market Brief - 2026-04-29', markdown, 'daily')
+    message = _telegram_message('BidMatrix Daily Market Brief - 2026-05-05', markdown, 'daily')
     assert 'Strong Signal' in message
     assert 'Weak Signal' not in message
-    assert 'Found 1 core signal worth attention today.' in message
+    assert 'Found 1 BidMatrix-relevant signal worth attention today.' in message
 
 
 def test_empty_strategic_context_is_not_rendered_in_telegram() -> None:
@@ -923,8 +925,8 @@ def test_market_watch_recent_timeout_does_not_block_final_rendering() -> None:
         relevance_score=5,
     )
     report = build_report([item], config, exa_errors=["market_watch_recent: timeout"])
-    message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-03", render_markdown(report), "daily")
-    assert "<b>Top market signal</b>" in message
+    message = _telegram_message(f"BidMatrix Daily Market Brief - {report.run_date.isoformat()}", render_markdown(report), "daily")
+    assert "<b>Top market news</b>" in message
     assert "Omnicom" in message
     assert "<b>Monitor error</b>" not in message
 
@@ -1045,7 +1047,7 @@ Exa returned results, but no fresh BidMatrix-core items passed the filters. Here
 ### 1. AppsFlyer — updated attribution guidance for app marketers
 - Why it may matter: Measurement teams still need the update even though it is not a same-day signal.
 - BidMatrix use: Useful background for attribution positioning.
-- Source: [AppsFlyer attribution update](https://example.com/appsflyer-update) - example.com - Date: 2026-04-04
+- Source: [AppsFlyer attribution update](https://example.com/appsflyer-update) - example.com - Date: 2026-05-03
 """
     message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-04", markdown, "daily")
     assert "<b>Monitor error</b>" not in message
@@ -1342,30 +1344,35 @@ def test_market_watch_digest_renders_multiple_items_when_candidates_exist() -> N
             "LoopMe launches Chartboost Direct",
             "LoopMe launched Chartboost Direct to bring direct brand demand into mobile apps with curated marketplace and PMP workflows.",
             "Brand budgets are moving into curated in-app inventory and premium publisher monetization.",
+            days_old=5,
             companies=["LoopMe", "Chartboost"],
         ),
         _market_watch_candidate(
             "Moloco launches performance CTV for app marketers",
             "Moloco launched performance CTV with connected TV campaign optimization, install outcomes, and measurable ROI across streaming inventory.",
             "CTV is being used like performance media rather than reach-only media.",
+            days_old=4,
             companies=["Moloco"],
         ),
         _market_watch_candidate(
             "AppsFlyer updates SKAN measurement workflow",
             "AppsFlyer updated SKAN and attribution guidance for app marketers using Privacy Sandbox and MMP workflows.",
             "Measurement teams need this change for live attribution decisions.",
+            days_old=3,
             companies=["AppsFlyer"],
         ),
         _market_watch_candidate(
             "Omnicom rolls out agentic media buying workflow",
             "Omnicom rolled out AI media buying and campaign optimization workflows for live media operations.",
             "AI campaign operations are moving into live media buying decisions.",
+            days_old=2,
             companies=["Omnicom"],
         ),
         _market_watch_candidate(
             "Overwolf Ads Launches Gamer Grid",
             "Overwolf Ads launched Gamer Grid for PC gaming audience targeting using deterministic gameplay behavior and hardware signals.",
             "Timely for game launches and gaming ad growth.",
+            days_old=1,
             companies=["Overwolf Ads"],
         ),
     ]
@@ -1374,7 +1381,7 @@ def test_market_watch_digest_renders_multiple_items_when_candidates_exist() -> N
     message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-04", markdown, "daily")
     assert len(report.daily_digest_items) >= 3
     assert report.diagnostics["selected_digest_items_count"] >= 3
-    assert "<b>Top market signals</b>" in message
+    assert "<b>Top market news</b>" in message
     assert "1." in message and "2." in message and "3." in message
 
 
@@ -2098,7 +2105,7 @@ def test_older_than_30_days_is_penalized_vs_newer_relevant_candidate() -> None:
     assert report.daily_digest_items[0].title == newer.title
 
 
-def test_telegram_renders_max_three_items_even_if_artifact_has_four() -> None:
+def test_telegram_renders_max_four_items_even_if_artifact_has_more() -> None:
     config = MonitorConfig(
         brand_name="BidMatrix",
         brand_description="Adtech",
@@ -2110,16 +2117,16 @@ def test_telegram_renders_max_three_items_even_if_artifact_has_four() -> None:
     items = [
         _market_watch_candidate("Kochava expands Certified Partners Program", "Kochava expanded its certified partner program and integration quality requirements.", "Published 2026-04-29 as MMP and partner-quality workflows evolve.", companies=["Kochava"], days_old=5),
         _market_watch_candidate("TikTok recreates its ads for billboards via Vistar Media partnership", "TikTok and Vistar Media are packaging DOOH creative and measurement workflows for cross-screen campaigns.", "Published 2026-05-04 as cross-screen creative execution expands.", companies=["TikTok", "Vistar Media"], days_old=0),
-        _market_watch_candidate("State of ad fraud 2026: marketer report insights", "AppsFlyer released a fraud report covering fraud risk, channel quality, and verified traffic.", "Published 2026-04-23 as app marketers face rising fraud pressure.", companies=["AppsFlyer"], days_old=11),
-        _market_watch_candidate("Moloco performance CTV for app marketers", "Moloco launched performance CTV with MMP attribution and measurable ROI across streaming inventory.", "Published 2026-04-22 as app marketers push CTV toward measurable performance outcomes.", companies=["Moloco"], days_old=12),
+        _market_watch_candidate("State of ad fraud 2026: marketer report insights", "AppsFlyer released a fraud report covering fraud risk, channel quality, and verified traffic.", "Published 2026-05-01 as app marketers face rising fraud pressure.", companies=["AppsFlyer"], days_old=4),
+        _market_watch_candidate("Moloco performance CTV for app marketers", "Moloco launched performance CTV with MMP attribution and measurable ROI across streaming inventory.", "Published 2026-05-02 as app marketers push CTV toward measurable performance outcomes.", companies=["Moloco"], days_old=3),
     ]
     report = build_report(items, config)
     assert len(report.daily_digest_items) == 4
     markdown = render_markdown(report)
     message = _telegram_message(f"BidMatrix Daily Market Brief - {report.run_date.isoformat()}", markdown, "daily")
     assert "\n1. " in message and "\n2. " in message and "\n3. " in message
-    assert "\n4. " not in message
-    assert "More items saved in the full report artifact." in message
+    assert "\n5. " not in message
+    assert "More items saved in the full report artifact." not in message
     assert "[Truncated." not in message
 
 
@@ -2174,14 +2181,14 @@ def test_telegram_avoids_duplicate_appsflyer_items_when_alternatives_exist() -> 
             "AppsFlyer launched Agent Hub beta, a centralized platform for AI-driven agents providing actionable marketing insights and fraud optimization workflows.",
             "Published 2026-04-16 as AppsFlyer expands AI workflow tools for marketers.",
             companies=["AppsFlyer"],
-            days_old=18,
+            days_old=6,
         ),
         _market_watch_candidate(
             "State of ad fraud 2026: marketer report insights",
             "AppsFlyer released a fraud report covering fraud risk, channel quality, and verified traffic.",
             "Published 2026-04-23 as app marketers face rising fraud pressure.",
             companies=["AppsFlyer"],
-            days_old=11,
+            days_old=5,
         ),
         _market_watch_candidate(
             "AppsFlyer Android SDK 6.18.0 Release",
@@ -2195,7 +2202,7 @@ def test_telegram_avoids_duplicate_appsflyer_items_when_alternatives_exist() -> 
             "Moloco launched performance CTV with MMP attribution and measurable ROI across streaming inventory.",
             "Published 2026-04-22 as app marketers push CTV toward measurable performance outcomes.",
             companies=["Moloco"],
-            days_old=12,
+            days_old=3,
         ),
         _market_watch_candidate(
             "Mobile ad fraud in the age of AI",
@@ -2213,5 +2220,117 @@ def test_telegram_avoids_duplicate_appsflyer_items_when_alternatives_exist() -> 
     assert "Mobile ad fraud in the age of AI" in markdown
     assert "AppsFlyer Android SDK 6.18.0 Release" in markdown
     assert "AppsFlyer Android SDK 6.18.0 Release" not in message
+    assert message.count("AppsFlyer") <= 1
+    assert "Mobile ad fraud" in message or "Moloco" in message
+
+
+def test_daily_telegram_excludes_bidmatrix_self_item_and_old_2025_item() -> None:
+    markdown = """# BidMatrix Daily Brief - 2026-05-05
+
+## Today's Useful Signals
+Found 4 core signals worth attention today.
+
+## Top Market Signals
+### 1. Moloco — launched performance CTV for app marketers
+- What happened: Moloco launched performance CTV with MMP attribution and measurable ROI across streaming inventory.
+- Why it matters: Published 2026-05-04 as app marketers push CTV toward measurable performance outcomes.
+- BidMatrix angle: Gives BidMatrix a concrete angle on transparent CTV, verified environments, and performance measurement beyond impressions.
+- Source: [Moloco](https://example.com/moloco) - moloco.com (high-signal) - Date: 2026-05-04 - confidence: high
+### 2. BidMatrix 2025 UA expansion kit
+- What happened: BidMatrix shared a 2025 expansion kit for user acquisition teams.
+- Why it matters: Published 2025-11-20 as an internal positioning update.
+- BidMatrix angle: Internal update.
+- Source: [BidMatrix](https://example.com/bidmatrix-kit) - bidmatrix.ai (high-signal) - Date: 2025-11-20 - confidence: high
+### 3. AppsFlyer fraud report
+- What happened: AppsFlyer released a fraud report covering fraud risk, channel quality, and verified traffic.
+- Why it matters: Published 2026-05-03 as app marketers face rising fraud pressure.
+- BidMatrix angle: Strengthens BidMatrix positioning around quality traffic, safer in-app inventory, and performance protection.
+- Source: [AppsFlyer](https://example.com/fraud) - appsflyer.com (high-signal) - Date: 2026-05-03 - confidence: high
+### 4. Adjust conversion rules update
+- What happened: Adjust released conversion rules updates for post-install validation and fraud controls.
+- Why it matters: Published 2026-05-02 for measurement and fraud workflow teams.
+- BidMatrix angle: Supports BidMatrix positioning around attribution resilience and cleaner performance decision-making.
+- Source: [Adjust](https://example.com/adjust) - adjust.com (high-signal) - Date: 2026-05-02 - confidence: high
+"""
+    message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-05", markdown, "daily")
+    assert "BidMatrix 2025 UA expansion kit" not in message
+    assert "2025" not in message
     assert "Moloco" in message
-    assert "Mobile ad fraud" in message
+    assert "AppsFlyer" in message
+    assert "Adjust conversion rules update" in message
+
+
+def test_daily_telegram_uses_only_last_seven_days_by_default() -> None:
+    markdown = """# BidMatrix Daily Brief - 2026-05-05
+
+## Today's Useful Signals
+Found 2 core signals worth attention today.
+
+## Top Market Signals
+### 1. Fresh measurement update
+- What happened: AppsFlyer updated Privacy Sandbox measurement workflows.
+- Why it matters: Published 2026-05-02 for Android attribution teams.
+- BidMatrix angle: Supports BidMatrix positioning around attribution resilience and privacy-safe optimization.
+- Source: [AppsFlyer](https://example.com/fresh) - appsflyer.com (high-signal) - Date: 2026-05-02 - confidence: high
+### 2. Older context item
+- What happened: Legacy MMP partner update.
+- Why it matters: Published 2026-04-20 as older context.
+- BidMatrix angle: Older context only.
+- Source: [Legacy](https://example.com/old) - example.com (high-signal) - Date: 2026-04-20 - confidence: high
+"""
+    message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-05", markdown, "daily")
+    assert "Fresh measurement update" in message
+    assert "Older context item" not in message
+
+
+def test_daily_telegram_avoids_duplicate_ctv_when_other_buckets_exist() -> None:
+    markdown = """# BidMatrix Daily Brief - 2026-05-05
+
+## Today's Useful Signals
+Found 4 core signals worth attention today.
+
+## Top Market Signals
+### 1. Moloco performance CTV
+- What happened: Moloco launched performance CTV with app-growth measurement and ROI signals.
+- Why it matters: Published 2026-05-04 as CTV becomes performance media.
+- BidMatrix angle: Gives BidMatrix a concrete angle on transparent CTV and performance measurement beyond impressions.
+- Source: [Moloco](https://example.com/moloco) - moloco.com (high-signal) - Date: 2026-05-04 - confidence: high
+### 2. IAS Total TV
+- What happened: IAS expanded Total TV measurement across premium CTV inventory.
+- Why it matters: Published 2026-05-03 as CTV verification broadens.
+- BidMatrix angle: Gives BidMatrix a concrete angle on transparent CTV and verified environments.
+- Source: [IAS](https://example.com/ias) - ias.com (high-signal) - Date: 2026-05-03 - confidence: high
+### 3. AppsFlyer fraud report
+- What happened: AppsFlyer released a fraud report covering fraud risk and channel quality.
+- Why it matters: Published 2026-05-03 as marketers face rising IVT pressure.
+- BidMatrix angle: Strengthens BidMatrix positioning around quality traffic and performance protection.
+- Source: [AppsFlyer](https://example.com/fraud) - appsflyer.com (high-signal) - Date: 2026-05-03 - confidence: high
+### 4. BidMatrix 2025 UA expansion kit
+- What happened: BidMatrix shared a 2025 growth update.
+- Why it matters: Published 2025-11-20 as an internal note.
+- BidMatrix angle: Internal.
+- Source: [BidMatrix](https://example.com/bidmatrix-kit) - bidmatrix.ai (high-signal) - Date: 2025-11-20 - confidence: high
+"""
+    message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-05", markdown, "daily")
+    ctv_count = int("Moloco performance CTV" in message) + int("IAS Total TV" in message)
+    assert ctv_count == 1
+    assert "AppsFlyer fraud report" in message
+    assert "BidMatrix 2025 UA expansion kit" not in message
+
+
+def test_daily_telegram_uses_no_strong_fresh_message_when_no_recent_items_exist() -> None:
+    markdown = """# BidMatrix Daily Brief - 2026-05-05
+
+## Today's Useful Signals
+No core BidMatrix-relevant signals found today.
+
+## Top Market Signals
+### 1. Older item
+- What happened: Older item.
+- Why it matters: Older item.
+- BidMatrix angle: Older context.
+- Source: [Older](https://example.com/old) - example.com (high-signal) - Date: 2026-04-01 - confidence: high
+"""
+    message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-05", markdown, "daily")
+    assert "No strong fresh market signals found today." in message
+    assert "<b>Top market news</b>" not in message
