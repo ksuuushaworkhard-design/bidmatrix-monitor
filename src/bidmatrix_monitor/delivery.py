@@ -411,7 +411,7 @@ def _shorten(text: str, max_chars: int) -> str:
 
 
 def _sync_intro_count(intro: str, count: int) -> str:
-    if "supplemented with" in intro.lower():
+    if "supplemented with" in intro.lower() or "fresh signals were limited" in intro.lower():
         return intro
     noun = "signal" if count == 1 else "signals"
     updated = re.sub(r"^Found\s+\d+\s+", f"Found {count} ", intro, count=1)
@@ -698,6 +698,8 @@ def _telegram_affects_line(item: dict[str, str]) -> str:
     happened = item.get("what_happened", "").lower()
     source = item.get("source", "").lower()
     text = " ".join([title, happened, source])
+    if "meta" in text and any(term in text for term in ("ctv", "streaming", "tv oem", "freewheel", "magnite", "ssp")):
+        return "CTV, premium video inventory, cross-screen media buying, and performance measurement."
     if any(term in text for term in ("openai", "chatgpt")) and any(term in text for term in ("conversion", "tracking", "pixel")):
         return "Ad measurement, conversion tracking, and performance accountability for AI-native ad platforms."
     if any(term in text for term in ("tiktok", "vistar", "dooh", "billboard", "out-of-home")):
@@ -724,6 +726,8 @@ def _telegram_bidmatrix_line(item: dict[str, str]) -> str:
     happened = item.get("what_happened", "").lower()
     source = item.get("source", "").lower()
     text = " ".join([title, happened, source])
+    if "meta" in text and any(term in text for term in ("ctv", "streaming", "tv oem", "freewheel", "magnite", "ssp")):
+        return "Useful broader context for BidMatrix CTV positioning: major ad platforms are exploring TV inventory as a performance and reach extension, but advertisers will still need measurable outcomes and verified environments."
     if any(term in text for term in ("openai", "chatgpt")) and any(term in text for term in ("conversion", "tracking", "pixel")):
         return "Useful as broader context: AI platforms are moving toward measurable advertising, which reinforces the need for attribution clarity and performance safeguards."
     return _executive_line(item.get("bidmatrix_angle") or item.get("content_angle") or item["title"], 170)
@@ -925,6 +929,10 @@ def _naturalize_sentence(text: str) -> str:
         (
             r"^Introduces first benchmark for in-app ad quality.*$",
             "It gives advertisers and app teams a clearer way to compare ad quality inside mobile apps.",
+        ),
+        (
+            r"^Meta is holding exploratory meetings with SSPs like Magnite and FreeWheel, TV OEMs.*$",
+            "Meta is exploring CTV expansion through talks with SSPs, TV OEMs, and streaming partners.",
         ),
     ]
     for pattern, replacement in rewrites:

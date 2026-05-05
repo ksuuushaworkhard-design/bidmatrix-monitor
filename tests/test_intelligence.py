@@ -2671,3 +2671,64 @@ Found 2 BidMatrix-relevant signals worth attention today.
     assert "e.g." not in message
     assert "(e.g." not in message
     assert "(\n" not in message
+
+
+def test_recent_context_intro_uses_plural_signals_grammar() -> None:
+    markdown = """# BidMatrix Daily Brief - 2026-05-05
+
+## Today's Useful Signals
+Found 2 BidMatrix-relevant signals worth attention today.
+
+## Top Market Signals
+### 1. Moloco performance CTV
+- What happened: Moloco launched performance CTV with MMP attribution and measurable ROI across streaming inventory.
+- Why it matters: Published 2026-04-22 as app marketers push CTV toward measurable performance outcomes.
+- BidMatrix angle: Gives BidMatrix a concrete angle on transparent CTV, verified environments, and performance measurement beyond impressions.
+- Source: [Moloco](https://example.com/moloco) - moloco.com (high-signal) - Date: 2026-04-22 - confidence: high
+### 2. OpenAI conversion tracking
+- What happened: OpenAI added a conversion tracking pixel to help advertisers measure conversions across ChatGPT ad experiences.
+- Why it matters: Published 2026-04-16 as AI-native ad platforms move toward measurable performance accountability.
+- BidMatrix angle: Supports BidMatrix positioning around attribution resilience and cleaner performance decision-making.
+- Source: [OpenAI](https://example.com/openai) - digiday.com (high-signal) - Date: 2026-04-16 - confidence: high
+"""
+    message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-05", markdown, "daily")
+    assert "Fresh signals were limited, so today’s digest uses the strongest recent market context." in message
+    assert "Fresh signal were limited" not in message
+
+
+def test_meta_ctv_item_gets_ctv_mapping_not_attribution_wording() -> None:
+    markdown = """# BidMatrix Daily Brief - 2026-05-05
+
+## Today's Useful Signals
+Found 1 core signal worth attention today.
+
+## Top Market Signals
+### 1. Meta CTV expansion
+- What happened: Meta is holding exploratory meetings with SSPs like Magnite and FreeWheel, TV OEMs, and streaming partners.
+- Why it matters: Published 2026-05-04 as major ad platforms explore CTV distribution and monetization.
+- BidMatrix angle: Supports BidMatrix positioning around attribution resilience, privacy-safe optimization, and cleaner performance decision-making for app growth teams.
+- Source: [Meta](https://example.com/meta-ctv) - digiday.com (high-signal) - Date: 2026-05-04 - confidence: high
+"""
+    message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-05", markdown, "daily")
+    assert "CTV, premium video inventory, cross-screen media buying, and performance measurement." in message
+    assert "Useful broader context for BidMatrix CTV positioning: major ad platforms are exploring TV inventory as a performance and reach extension, but advertisers will still need measurable outcomes and verified environments." in message
+    assert "Supports BidMatrix positioning around attribution resilience, privacy-safe optimization, and cleaner performance decision-making for app growth teams." not in message
+    assert "Attribution, MMP workflows, and privacy-safe measurement." not in message
+
+
+def test_meta_ctv_summary_cleanup_avoids_awkward_fragment() -> None:
+    markdown = """# BidMatrix Daily Brief - 2026-05-05
+
+## Today's Useful Signals
+Found 1 core signal worth attention today.
+
+## Top Market Signals
+### 1. Meta CTV expansion
+- What happened: Meta is holding exploratory meetings with SSPs like Magnite and FreeWheel, TV OEMs.
+- Why it matters: Published 2026-05-04 as major ad platforms explore CTV distribution and monetization.
+- BidMatrix angle: Supports BidMatrix positioning around attribution resilience, privacy-safe optimization, and cleaner performance decision-making for app growth teams.
+- Source: [Meta](https://example.com/meta-ctv) - digiday.com (high-signal) - Date: 2026-05-04 - confidence: high
+"""
+    message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-05", markdown, "daily")
+    assert "Meta is exploring CTV expansion through talks with SSPs, TV OEMs, and streaming partners." in message
+    assert "Magnite and FreeWheel, TV OEMs." not in message
