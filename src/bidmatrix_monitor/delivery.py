@@ -85,10 +85,13 @@ def _telegram_message(subject: str, text: str, report_type: str) -> str:
     digest_items, selection_meta = _select_telegram_daily_items(top_items, adjacent, target=4, limit=4)
 
     if digest_items:
-        core_count = sum(1 for item in digest_items if item.get('section') == 'top')
+        core_count = sum(1 for item in digest_items if _telegram_item_counts_as_core(item))
         adjacent_count = len(digest_items) - core_count
         if _is_market_watch_intro(intro_line) or not core_count:
-            lines.extend(["", "<b>Market Watch</b>", "No major core BidMatrix signal dominated today, but several relevant market moves are worth tracking."])
+            if len(digest_items) == 1 and adjacent_count == 1:
+                lines.extend(["", "<b>Market Watch</b>", "No strong fresh BidMatrix-core signals found today. One adjacent market signal is worth watching."])
+            else:
+                lines.extend(["", "<b>Market Watch</b>", "No major core BidMatrix signal dominated today, but several relevant market moves are worth tracking."])
         else:
             if selection_meta["fresh_7d_count"] and not selection_meta["recent_14d_count"] and not selection_meta["recent_30d_count"] and not selection_meta["unknown_trusted_count"]:
                 intro = f"Found {selection_meta['fresh_7d_count']} fresh BidMatrix-relevant signal{'s' if selection_meta['fresh_7d_count'] != 1 else ''} worth attention today."
@@ -104,7 +107,8 @@ def _telegram_message(subject: str, text: str, report_type: str) -> str:
                 intro = f"Found {core_count} BidMatrix-relevant signal{'s' if core_count != 1 else ''} worth attention today."
             lines.extend(["", "<b>Today's useful signals</b>", html.escape(_sync_intro_count(intro, len(digest_items)))])
 
-        lines.extend(["", "<b>Top market news</b>"])
+        section_label = "<b>Market signal to watch</b>" if len(digest_items) == 1 and adjacent_count == 1 else "<b>Top market news</b>"
+        lines.extend(["", section_label])
         for index, item in enumerate(digest_items[:4], start=1):
             lines.extend(_telegram_daily_news_item(item, index))
     else:
@@ -599,6 +603,25 @@ def _telegram_is_trusted_unknown(item: dict[str, str]) -> bool:
         return False
     recent_markers = ("launch", "launched", "update", "updated", "announced", "report", "guidance", "privacy", "fraud", "ctv", "measurement", "attribution")
     return any(term in title or term in body for term in recent_markers)
+
+
+def _telegram_item_counts_as_core(item: dict[str, str]) -> bool:
+    angle = " ".join(
+        [
+            item.get("bidmatrix_angle", ""),
+            item.get("content_angle", ""),
+            item.get("why_it_matters", ""),
+        ]
+    ).lower()
+    adjacent_markers = (
+        "broad cross-screen context",
+        "relevant only if",
+        "indirect",
+        "watchlist only",
+    )
+    if any(marker in angle for marker in adjacent_markers):
+        return False
+    return item.get("section") == "top"
 
 
 def _telegram_daily_bucket(item: dict[str, str]) -> str:

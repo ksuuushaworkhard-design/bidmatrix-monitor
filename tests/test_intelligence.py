@@ -2473,3 +2473,75 @@ Found 1 core signal worth attention, supplemented with 3 recent market signals f
     assert "Singular migration guide" not in message
     assert "Unity x Index Exchange" in message
     assert "Moloco performance CTV" in message or "LoopMe direct demand" in message or "Kochava bulletin" in message
+
+
+def test_tiktok_cross_screen_angle_counts_as_adjacent_in_telegram() -> None:
+    markdown = """# BidMatrix Daily Brief - 2026-05-05
+
+## Today's Useful Signals
+Found 1 core signal worth attention today.
+
+## Top Market Signals
+### 1. TikTok x Vistar Media
+- What happened: TikTok partnered with Vistar Media to reformat vertical ads into DOOH billboards.
+- Why it matters: Published 2026-05-04 as cross-screen creative execution expands.
+- BidMatrix angle: Broad cross-screen context; relevant only if DOOH becomes measurable for app campaigns or retargeting.
+- Source: [TikTok x Vistar](https://example.com/tiktok) - digiday.com (high-signal) - Date: 2026-05-04 - confidence: high
+"""
+    message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-05", markdown, "daily")
+    assert "Found 1 fresh BidMatrix-relevant signal worth attention today." not in message
+    assert "No strong fresh BidMatrix-core signals found today." in message
+
+
+def test_one_adjacent_only_item_uses_market_signal_to_watch() -> None:
+    markdown = """# BidMatrix Daily Brief - 2026-05-05
+
+## Today's Useful Signals
+Found 1 core signal worth attention today.
+
+## Top Market Signals
+### 1. TikTok x Vistar Media
+- What happened: TikTok partnered with Vistar Media to reformat vertical ads into DOOH billboards.
+- Why it matters: Published 2026-05-04 as cross-screen creative execution expands.
+- BidMatrix angle: Broad cross-screen context; relevant only if DOOH becomes measurable for app campaigns or retargeting.
+- Source: [TikTok x Vistar](https://example.com/tiktok) - digiday.com (high-signal) - Date: 2026-05-04 - confidence: high
+"""
+    message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-05", markdown, "daily")
+    assert "<b>Market signal to watch</b>" in message
+    assert "<b>Top market news</b>" not in message
+
+
+def test_core_item_keeps_normal_top_market_news_intro() -> None:
+    markdown = """# BidMatrix Daily Brief - 2026-05-05
+
+## Today's Useful Signals
+Found 1 core signal worth attention today.
+
+## Top Market Signals
+### 1. Adjust conversion rules
+- What happened: Adjust released conversion rules updates for post-install validation and fraud controls.
+- Why it matters: Published 2026-05-02 for attribution workflow teams.
+- BidMatrix angle: Supports BidMatrix positioning around attribution resilience and cleaner performance decision-making.
+- Source: [Adjust](https://example.com/adjust) - adjust.com (high-signal) - Date: 2026-05-02 - confidence: high
+"""
+    message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-05", markdown, "daily")
+    assert "Found 1 fresh BidMatrix-relevant signal worth attention today." in message
+    assert "<b>Top market news</b>" in message
+
+
+def test_relevant_only_if_item_is_not_counted_as_core() -> None:
+    markdown = """# BidMatrix Daily Brief - 2026-05-05
+
+## Today's Useful Signals
+Found 1 core signal worth attention today.
+
+## Top Market Signals
+### 1. Test cross-screen item
+- What happened: A cross-screen item.
+- Why it matters: Published 2026-05-04 as cross-screen execution expands.
+- BidMatrix angle: Broad cross-screen context; relevant only if DOOH becomes measurable for app campaigns or retargeting.
+- Source: [Test](https://example.com/test) - example.com (high-signal) - Date: 2026-05-04 - confidence: high
+"""
+    message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-05", markdown, "daily")
+    assert "BidMatrix-relevant signal worth attention" not in message
+    assert "adjacent market signal" in message or "adjacent market signal is worth watching" in message
