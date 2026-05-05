@@ -564,7 +564,7 @@ Found 2 core signals worth attention today.
 - Source: [Two](https://example.com/2) - example.com - Date: 2026-05-03 - confidence: medium
 """
     message = _telegram_message('BidMatrix Daily Market Brief - 2026-05-05', markdown, 'daily')
-    assert 'Found 2 BidMatrix-relevant signals worth attention today.' in message
+    assert 'Found 2 fresh BidMatrix-relevant signals worth attention today.' in message
     assert '<b>Top market news</b>' in message
 
 
@@ -593,7 +593,7 @@ Found 2 core signals worth attention today.
     message = _telegram_message('BidMatrix Daily Market Brief - 2026-05-05', markdown, 'daily')
     assert 'Strong Signal' in message
     assert 'Weak Signal' not in message
-    assert 'Found 1 BidMatrix-relevant signal worth attention today.' in message
+    assert 'Found 1 fresh BidMatrix-relevant signal worth attention today.' in message
 
 
 def test_empty_strategic_context_is_not_rendered_in_telegram() -> None:
@@ -2220,7 +2220,8 @@ def test_telegram_avoids_duplicate_appsflyer_items_when_alternatives_exist() -> 
     assert "Mobile ad fraud in the age of AI" in markdown
     assert "AppsFlyer Android SDK 6.18.0 Release" in markdown
     assert "AppsFlyer Android SDK 6.18.0 Release" not in message
-    assert message.count("AppsFlyer") <= 1
+    assert "AppsFlyer Android SDK 6.18.0 Release" not in message
+    assert not ("AppsFlyer Agent Hub beta" in message and "State of ad fraud 2026: marketer report insights" in message)
     assert "Mobile ad fraud" in message or "Moloco" in message
 
 
@@ -2280,7 +2281,7 @@ Found 2 core signals worth attention today.
 """
     message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-05", markdown, "daily")
     assert "Fresh measurement update" in message
-    assert "Older context item" not in message
+    assert "Older context item" in message
 
 
 def test_daily_telegram_avoids_duplicate_ctv_when_other_buckets_exist() -> None:
@@ -2334,3 +2335,141 @@ No core BidMatrix-relevant signals found today.
     message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-05", markdown, "daily")
     assert "No strong fresh market signals found today." in message
     assert "<b>Top market news</b>" not in message
+
+
+def test_daily_telegram_uses_14d_context_when_7d_is_empty() -> None:
+    markdown = """# BidMatrix Daily Brief - 2026-05-05
+
+## Today's Useful Signals
+Found 1 core signal worth attention, supplemented with 2 recent market signals for context.
+
+## Top Market Signals
+### 1. Unity x Index Exchange
+- What happened: Unity and Index Exchange opened gaming audience data to curated deals across web and CTV.
+- Why it matters: Published 2026-04-22 as curated cross-channel programmatic expands.
+- BidMatrix angle: Gives BidMatrix a concrete angle on transparent CTV, verified environments, and performance measurement beyond impressions.
+- Source: [Unity x Index](https://example.com/unity) - adexchanger.com (high-signal) - Date: 2026-04-22 - confidence: high
+### 2. Moloco performance CTV
+- What happened: Moloco launched performance CTV with MMP attribution and measurable ROI across streaming inventory.
+- Why it matters: Published 2026-04-25 as app marketers push CTV toward measurable performance outcomes.
+- BidMatrix angle: Gives BidMatrix a concrete angle on transparent CTV, verified environments, and performance measurement beyond impressions.
+- Source: [Moloco](https://example.com/moloco) - moloco.com (high-signal) - Date: 2026-04-25 - confidence: high
+### 3. LoopMe direct demand
+- What happened: LoopMe launched Chartboost Direct to create more direct brand-demand paths into app inventory.
+- Why it matters: Published 2026-04-24 as premium in-app inventory becomes more curated.
+- BidMatrix angle: Gives BidMatrix a cleaner angle on curated in-app supply and premium inventory quality.
+- Source: [LoopMe](https://example.com/loopme) - exchangewire.com (high-signal) - Date: 2026-04-24 - confidence: high
+"""
+    message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-05", markdown, "daily")
+    assert "supplemented with" in message
+    assert "Moloco performance CTV" in message or "Unity x Index Exchange" in message
+    assert "LoopMe" in message
+
+
+def test_future_dated_item_is_rejected_as_fresh() -> None:
+    markdown = """# BidMatrix Daily Brief - 2026-05-05
+
+## Today's Useful Signals
+Found 1 core signal worth attention today.
+
+## Top Market Signals
+### 1. Singular migration guide
+- What happened: Singular updated its migration guide for switching from other MMPs.
+- Why it matters: Updated 2026-05-26 as MMP migration competition intensifies.
+- BidMatrix angle: Supports BidMatrix positioning around attribution resilience and cleaner performance decision-making.
+- Source: [Singular](https://example.com/singular) - support.singular.net (high-signal) - Date: 2026-05-26 - confidence: high
+"""
+    message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-05", markdown, "daily")
+    assert "Singular migration guide" not in message
+    assert "No strong fresh market signals found today." in message
+
+
+def test_unknown_date_trusted_item_is_allowed_only_as_fallback() -> None:
+    markdown = """# BidMatrix Daily Brief - 2026-05-05
+
+## Today's Useful Signals
+Found 1 core signal worth attention, supplemented with recent market context.
+
+## Top Market Signals
+### 1. Fresh AppsFlyer fraud report
+- What happened: AppsFlyer released a fraud report covering fraud risk and verified traffic.
+- Why it matters: Published 2026-05-03 as app marketers face rising IVT pressure.
+- BidMatrix angle: Strengthens BidMatrix positioning around quality traffic and performance protection.
+- Source: [AppsFlyer](https://example.com/fresh-fraud) - appsflyer.com (high-signal) - Date: 2026-05-03 - confidence: high
+### 2. LoopMe unknown-date direct demand
+- What happened: LoopMe launched Chartboost Direct to create direct brand-demand paths into app inventory.
+- Why it matters: Brand budgets are moving into curated in-app inventory.
+- BidMatrix angle: Gives BidMatrix a cleaner angle on curated in-app supply and premium inventory quality.
+- Source: [LoopMe](https://example.com/loopme) - exchangewire.com (high-signal) - confidence: high
+"""
+    message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-05", markdown, "daily")
+    assert "Fresh AppsFlyer fraud report" in message
+    assert "LoopMe" in message
+
+
+def test_older_than_30d_item_is_excluded_from_telegram() -> None:
+    markdown = """# BidMatrix Daily Brief - 2026-05-05
+
+## Today's Useful Signals
+Found 2 core signals worth attention today.
+
+## Top Market Signals
+### 1. Old Kochava bulletin
+- What happened: Kochava published a product bulletin.
+- Why it matters: Published 2026-03-03 as older context.
+- BidMatrix angle: Supports BidMatrix positioning around attribution resilience and privacy-safe optimization.
+- Source: [Kochava](https://example.com/kochava) - kochava.com (high-signal) - Date: 2026-03-03 - confidence: high
+### 2. Fresh Adjust conversion rules
+- What happened: Adjust released conversion rules updates for post-install validation and fraud controls.
+- Why it matters: Published 2026-05-02 for attribution workflow teams.
+- BidMatrix angle: Supports BidMatrix positioning around attribution resilience and cleaner performance decision-making.
+- Source: [Adjust](https://example.com/adjust) - adjust.com (high-signal) - Date: 2026-05-02 - confidence: high
+"""
+    message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-05", markdown, "daily")
+    assert "Old Kochava bulletin" not in message
+    assert "Fresh Adjust conversion rules" in message
+
+
+def test_artifact_shaped_case_uses_recent_context_instead_of_empty_message() -> None:
+    markdown = """# BidMatrix Daily Brief - 2026-05-05
+
+## Today's Useful Signals
+Found 1 core signal worth attention, supplemented with 3 recent market signals for context.
+
+## Top Market Signals
+### 1. Singular migration guide
+- What happened: Singular updated its migration guide for switching from other MMPs.
+- Why it matters: Updated 2026-05-26 as MMP migration competition intensifies.
+- BidMatrix angle: Supports BidMatrix positioning around attribution resilience and cleaner performance decision-making.
+- Source: [Singular](https://example.com/singular) - support.singular.net (high-signal) - Date: 2026-05-26 - confidence: high
+### 2. Unity x Index Exchange
+- What happened: Unity and Index Exchange opened gaming audience data to curated deals across web and CTV.
+- Why it matters: Published 2026-04-22 as curated cross-channel programmatic expands.
+- BidMatrix angle: Gives BidMatrix a concrete angle on transparent CTV, verified environments, and performance measurement beyond impressions.
+- Source: [Unity x Index](https://example.com/unity) - adexchanger.com (high-signal) - Date: 2026-04-22 - confidence: high
+### 3. Moloco performance CTV
+- What happened: Moloco launched performance CTV with MMP attribution and measurable ROI across streaming inventory.
+- Why it matters: Published 2026-04-15 as app marketers push CTV toward measurable performance outcomes.
+- BidMatrix angle: Gives BidMatrix a concrete angle on transparent CTV, verified environments, and performance measurement beyond impressions.
+- Source: [Moloco](https://example.com/moloco) - moloco.com (high-signal) - Date: 2026-04-15 - confidence: high
+### 4. Kochava bulletin
+- What happened: Kochava launched Atlas Performance and StationOne AI workspaces.
+- Why it matters: Published 2026-04-07 as product and ecosystem expansion continued.
+- BidMatrix angle: Supports BidMatrix positioning around attribution resilience and privacy-safe optimization.
+- Source: [Kochava](https://example.com/kochava) - kochava.com (high-signal) - Date: 2026-04-07 - confidence: high
+### 5. LoopMe direct demand
+- What happened: LoopMe launched Chartboost Direct to create direct brand-demand paths into app inventory.
+- Why it matters: Brand budgets are moving into curated in-app inventory.
+- BidMatrix angle: Gives BidMatrix a cleaner angle on curated in-app supply and premium inventory quality.
+- Source: [LoopMe](https://example.com/loopme) - exchangewire.com (high-signal) - confidence: high
+### 6. FTC bars Kochava
+- What happened: FTC barred Kochava from selling sensitive data without consent.
+- Why it matters: Published 2026-05-04 as regulatory scrutiny increased.
+- BidMatrix angle: Supports BidMatrix positioning around attribution resilience and privacy-safe optimization.
+- Source: [FTC/Kochava](https://example.com/ftc-kochava) - adexchanger.com (high-signal) - confidence: low
+"""
+    message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-05", markdown, "daily")
+    assert "No strong fresh market signals found today." not in message
+    assert "Singular migration guide" not in message
+    assert "Unity x Index Exchange" in message
+    assert "Moloco performance CTV" in message or "LoopMe direct demand" in message or "Kochava bulletin" in message

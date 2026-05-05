@@ -80,9 +80,9 @@ def _telegram_message(subject: str, text: str, report_type: str) -> str:
     adjacent_items = [item for item in items if item.get('section') == 'adjacent']
     intro_line = _daily_intro_line(text)
     lines = [title]
-    top_items = _filter_telegram_daily_items(all_top_items, run_date)
-    adjacent = _filter_telegram_daily_items(adjacent_items, run_date)
-    digest_items = _select_telegram_daily_items(top_items, adjacent, target=4, limit=4)
+    top_items, top_stats = _filter_telegram_daily_items(all_top_items, run_date)
+    adjacent, adjacent_stats = _filter_telegram_daily_items(adjacent_items, run_date)
+    digest_items, selection_meta = _select_telegram_daily_items(top_items, adjacent, target=4, limit=4)
 
     if digest_items:
         core_count = sum(1 for item in digest_items if item.get('section') == 'top')
@@ -90,7 +90,13 @@ def _telegram_message(subject: str, text: str, report_type: str) -> str:
         if _is_market_watch_intro(intro_line) or not core_count:
             lines.extend(["", "<b>Market Watch</b>", "No major core BidMatrix signal dominated today, but several relevant market moves are worth tracking."])
         else:
-            if "supplemented with" in intro_line.lower():
+            if selection_meta["fresh_7d_count"] and not selection_meta["recent_14d_count"] and not selection_meta["recent_30d_count"] and not selection_meta["unknown_trusted_count"]:
+                intro = f"Found {selection_meta['fresh_7d_count']} fresh BidMatrix-relevant signal{'s' if selection_meta['fresh_7d_count'] != 1 else ''} worth attention today."
+            elif selection_meta["fresh_7d_count"]:
+                intro = f"Found {selection_meta['fresh_7d_count']} fresh signal{'s' if selection_meta['fresh_7d_count'] != 1 else ''}, supplemented with recent market context."
+            elif selection_meta["unknown_trusted_count"]:
+                intro = "Fresh dated signals were limited, so this digest includes trusted recent market context."
+            elif "supplemented with" in intro_line.lower():
                 intro = intro_line
             elif adjacent_count:
                 intro = f"Found {core_count} fresh core signal{'s' if core_count != 1 else ''} and added {adjacent_count} adjacent market signal{'s' if adjacent_count != 1 else ''} for context."
@@ -422,23 +428,49 @@ def _telegram_daily_news_item(item: dict[str, str], index: int) -> list[str]:
     return lines
 
 
-def _filter_telegram_daily_items(items: list[dict[str, str]], run_date: date | None) -> list[dict[str, str]]:
+def _filter_telegram_daily_items(items: list[dict[str, str]], run_date: date | None) -> tuple[list[dict[str, str]], dict[str, int | dict[str, int]]]:
     filtered: list[dict[str, str]] = []
+    stats = {
+        "fresh_7d_count": 0,
+        "recent_14d_count": 0,
+        "recent_30d_count": 0,
+        "unknown_trusted_count": 0,
+        "future_date_rejected_count": 0,
+        "date_quality_breakdown": {},
+    }
+    breakdown: dict[str, int] = {}
     for item in items:
-        if item.get("confidence") == "low":
-            continue
-        published = _telegram_item_date(item)
-        if published is None or run_date is None:
-            continue
-        if published.year < 2026:
-            continue
-        age_days = (run_date - published).days
-        if age_days < 0 or age_days > 7:
-            continue
         if _telegram_is_self_item(item):
             continue
+        status = _telegram_date_status(item, run_date)
+        quality = status["quality"]
+        breakdown[quality] = breakdown.get(quality, 0) + 1
+        if quality == "future_invalid":
+            stats["future_date_rejected_count"] += 1
+            continue
+        if quality == "old_2025_or_earlier":
+            continue
+        if quality == "older_than_30d":
+            continue
+        if item.get("confidence") == "low":
+            continue
+        if quality == "unknown_trusted":
+            if not _telegram_is_trusted_unknown(item):
+                continue
+            stats["unknown_trusted_count"] += 1
+        elif quality == "fresh_7d":
+            stats["fresh_7d_count"] += 1
+        elif quality == "recent_14d":
+            stats["recent_14d_count"] += 1
+        elif quality == "recent_30d":
+            stats["recent_30d_count"] += 1
+        else:
+            continue
+        item = dict(item)
+        item["_telegram_date_quality"] = quality
         filtered.append(item)
-    return filtered
+    stats["date_quality_breakdown"] = breakdown
+    return filtered, stats
 
 
 def _select_telegram_daily_items(
@@ -447,7 +479,7 @@ def _select_telegram_daily_items(
     *,
     target: int = 3,
     limit: int = 4,
-) -> list[dict[str, str]]:
+) -> tuple[list[dict[str, str]], dict[str, int]]:
     selected: list[dict[str, str]] = []
     seen_urls: set[str] = set()
     seen_titles: set[str] = set()
@@ -455,11 +487,19 @@ def _select_telegram_daily_items(
     seen_buckets: set[str] = set()
     ranked_top = sorted(top_items, key=lambda item: (-_telegram_daily_priority(item), item.get("title", "").lower()))
     ranked_adjacent = sorted(adjacent_items, key=lambda item: (-_telegram_daily_priority(item), item.get("title", "").lower()))
+    meta = {
+        "fresh_7d_count": 0,
+        "recent_14d_count": 0,
+        "recent_30d_count": 0,
+        "unknown_trusted_count": 0,
+    }
 
-    def add_candidates(candidates: list[dict[str, str]], *, unique_bucket: bool) -> None:
+    def add_candidates(candidates: list[dict[str, str]], *, unique_bucket: bool, allowed_qualities: set[str]) -> None:
         for item in candidates:
             if len(selected) >= target:
                 return
+            if item.get("_telegram_date_quality") not in allowed_qualities:
+                continue
             url = (item.get("url") or "").strip().lower()
             title = (item.get("title") or "").strip().lower()
             company = _telegram_item_company(item).strip().lower()
@@ -481,15 +521,36 @@ def _select_telegram_daily_items(
                 seen_companies.add(company)
             if bucket:
                 seen_buckets.add(bucket)
+            quality = item.get("_telegram_date_quality")
+            if quality == "fresh_7d":
+                meta["fresh_7d_count"] += 1
+            elif quality == "recent_14d":
+                meta["recent_14d_count"] += 1
+            elif quality == "recent_30d":
+                meta["recent_30d_count"] += 1
+            elif quality == "unknown_trusted":
+                meta["unknown_trusted_count"] += 1
 
-    add_candidates(ranked_top, unique_bucket=True)
-    if len(selected) < target:
-        add_candidates(ranked_adjacent, unique_bucket=True)
+    for allowed in (
+        {"fresh_7d"},
+        {"recent_14d"},
+        {"unknown_trusted"},
+        {"recent_30d"},
+    ):
+        add_candidates(ranked_top, unique_bucket=True, allowed_qualities=allowed)
+        if len(selected) < target:
+            add_candidates(ranked_adjacent, unique_bucket=True, allowed_qualities=allowed)
     if len(selected) < 2:
-        add_candidates(ranked_top, unique_bucket=False)
-    if len(selected) < 2:
-        add_candidates(ranked_adjacent, unique_bucket=False)
-    return selected[:limit]
+        for allowed in (
+            {"fresh_7d"},
+            {"recent_14d"},
+            {"unknown_trusted"},
+            {"recent_30d"},
+        ):
+            add_candidates(ranked_top, unique_bucket=False, allowed_qualities=allowed)
+            if len(selected) < 2:
+                add_candidates(ranked_adjacent, unique_bucket=False, allowed_qualities=allowed)
+    return selected[:limit], meta
 
 
 def _telegram_item_date(item: dict[str, str]) -> date | None:
@@ -506,6 +567,38 @@ def _telegram_item_date(item: dict[str, str]) -> date | None:
 def _telegram_is_self_item(item: dict[str, str]) -> bool:
     text = " ".join([item.get("title", ""), item.get("source", ""), item.get("url", "")]).lower()
     return "bidmatrix" in text
+
+
+def _telegram_date_status(item: dict[str, str], run_date: date | None) -> dict[str, str | int | None]:
+    published = _telegram_item_date(item)
+    if run_date is None:
+        return {"quality": "missing_or_unknown_date", "age_days": None}
+    if published is None:
+        return {"quality": "unknown_trusted" if _telegram_is_trusted_unknown(item) else "missing_or_unknown_date", "age_days": None}
+    if published.year < 2026:
+        return {"quality": "old_2025_or_earlier", "age_days": None}
+    age_days = (run_date - published).days
+    if age_days < 0:
+        return {"quality": "future_invalid", "age_days": age_days}
+    if age_days <= 7:
+        return {"quality": "fresh_7d", "age_days": age_days}
+    if age_days <= 14:
+        return {"quality": "recent_14d", "age_days": age_days}
+    if age_days <= 30:
+        return {"quality": "recent_30d", "age_days": age_days}
+    return {"quality": "older_than_30d", "age_days": age_days}
+
+
+def _telegram_is_trusted_unknown(item: dict[str, str]) -> bool:
+    source = (item.get("source") or "").lower()
+    title = (item.get("title") or "").lower()
+    body = " ".join([item.get("what_happened", ""), item.get("why_it_matters", ""), item.get("bidmatrix_angle", "")]).lower()
+    if "high-signal" not in source:
+        return False
+    if item.get("confidence") == "low":
+        return False
+    recent_markers = ("launch", "launched", "update", "updated", "announced", "report", "guidance", "privacy", "fraud", "ctv", "measurement", "attribution")
+    return any(term in title or term in body for term in recent_markers)
 
 
 def _telegram_daily_bucket(item: dict[str, str]) -> str:
@@ -550,6 +643,15 @@ def _telegram_daily_priority(item: dict[str, str]) -> int:
     }.get(bucket, 3)
     text = " ".join([item.get("title", ""), item.get("what_happened", ""), item.get("source", "")]).lower()
     if any(term in text for term in ("sdk", "release notes", "ipv6", "release")):
+        score -= 4
+    quality = item.get("_telegram_date_quality")
+    if quality == "fresh_7d":
+        score += 8
+    elif quality == "recent_14d":
+        score += 4
+    elif quality == "unknown_trusted":
+        score -= 2
+    elif quality == "recent_30d":
         score -= 4
     return score
 
