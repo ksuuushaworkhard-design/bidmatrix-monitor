@@ -431,10 +431,8 @@ def _telegram_daily_news_item(item: dict[str, str], index: int) -> list[str]:
     lines = [
         f"{index}. {html.escape(_clean_trailing_fragment(_shorten(item['title'], 170)))}",
         "<b>What happened</b>",
-        html.escape(_executive_line(item.get("what_happened") or item["title"], 180)),
-        "<b>What it affects</b>",
-        html.escape(_telegram_affects_line(item)),
-        "<b>Why it matters for BidMatrix</b>",
+        html.escape(_telegram_what_happened_line(item)),
+        "<b>BidMatrix takeaway</b>",
         html.escape(_telegram_bidmatrix_line(item)),
         "<b>Source</b>",
         html.escape(_source_name(item)),
@@ -735,6 +733,16 @@ def _telegram_bidmatrix_line(item: dict[str, str]) -> str:
     if any(term in text for term in ("openai", "chatgpt")) and any(term in text for term in ("conversion", "tracking", "pixel")):
         return "Useful as broader context: AI platforms are moving toward measurable advertising, which reinforces the need for attribution clarity and performance safeguards."
     return _executive_line(item.get("bidmatrix_angle") or item.get("content_angle") or item["title"], 170)
+
+
+def _telegram_what_happened_line(item: dict[str, str]) -> str:
+    title = item.get("title", "").lower()
+    happened = item.get("what_happened") or item.get("title") or ""
+    source = item.get("source", "").lower()
+    text = " ".join([title, happened.lower(), source])
+    if "appsflyer" in text and any(term in text for term in ("state of fraud", "fraud report")):
+        return "The report highlights where fraud pressure is concentrating across channels, verticals, and acquisition patterns."
+    return _executive_line(happened, 180)
 
 
 def _is_market_watch_intro(intro: str) -> bool:

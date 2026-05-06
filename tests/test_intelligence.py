@@ -374,8 +374,9 @@ Found 1 core signal worth attention today.
     message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-05", markdown, "daily")
     assert "Top market news" in message
     assert "What happened" in message
-    assert "What it affects" in message
-    assert "Why it matters for BidMatrix" in message
+    assert "BidMatrix takeaway" in message
+    assert "What it affects" not in message
+    assert "Why it matters for BidMatrix" not in message
     assert "Source" in message
     assert "https://example.com/daivid" in message
     assert "What this suggests" not in message
@@ -2562,10 +2563,11 @@ Found 1 core signal worth attention today.
 - Why it matters: Published 2026-05-04 as cross-screen creative execution expands.
 - BidMatrix angle: Broad cross-screen context; relevant only if DOOH becomes measurable for app campaigns or retargeting.
 - Source: [TikTok x Vistar](https://example.com/tiktok) - digiday.com (high-signal) - Date: 2026-05-04 - confidence: high
-"""
+    """
     message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-05", markdown, "daily")
-    assert "Cross-screen creative execution, DOOH media, and potential future app-campaign measurement." in message
-    assert "Programmatic supply paths, in-app inventory access, and DSP or SSP infrastructure." not in message
+    assert "BidMatrix takeaway" in message
+    assert "Broad cross-screen context — relevant only if DOOH becomes measurable for app campaigns or retargeting." in message
+    assert "What it affects" not in message
 
 
 def test_appsflyer_fraud_gets_fraud_affects_line() -> None:
@@ -2580,10 +2582,11 @@ Found 1 core signal worth attention today.
 - Why it matters: Published 2026-05-03 as app marketers face rising fraud pressure.
 - BidMatrix angle: Strengthens BidMatrix positioning around quality traffic, safer in-app inventory, and performance protection.
 - Source: [AppsFlyer](https://example.com/fraud) - appsflyer.com (high-signal) - Date: 2026-05-03 - confidence: high
-"""
+    """
     message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-05", markdown, "daily")
-    assert "Traffic quality, fraud detection, IVT risk, channel quality, and verified acquisition sources." in message
-    assert "Attribution, MMP workflows, and privacy-safe measurement." not in message
+    assert "The report highlights where fraud pressure is concentrating across channels, verticals, and acquisition patterns." in message
+    assert "AppsFlyer released a fraud report covering fraud risk, channel quality, verified traffic, and IVT patterns." not in message
+    assert "BidMatrix takeaway" in message
 
 
 def test_mixed_core_and_adjacent_digest_gets_honest_intro() -> None:
@@ -2644,11 +2647,11 @@ Found 1 core signal worth attention today.
 - Why it matters: Published 2026-04-16 as AI-native ad platforms move toward measurable performance accountability.
 - BidMatrix angle: Supports BidMatrix positioning around attribution resilience and cleaner performance decision-making.
 - Source: [OpenAI](https://example.com/openai) - digiday.com (high-signal) - Date: 2026-04-16 - confidence: high
-"""
+    """
     message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-05", markdown, "daily")
-    assert "Ad measurement, conversion tracking, and performance accountability for AI-native ad platforms." in message
     assert "Useful as broader context: AI platforms are moving toward measurable advertising, which reinforces the need for attribution clarity and performance safeguards." in message
-    assert "Attribution, MMP workflows, and privacy-safe measurement." not in message
+    assert "BidMatrix takeaway" in message
+    assert "What it affects" not in message
 
 
 def test_telegram_cleanup_removes_dangling_fragments() -> None:
@@ -2711,12 +2714,12 @@ Found 1 core signal worth attention today.
 - Why it matters: Published 2026-05-04 as major ad platforms explore CTV distribution and monetization.
 - BidMatrix angle: Supports BidMatrix positioning around attribution resilience, privacy-safe optimization, and cleaner performance decision-making for app growth teams.
 - Source: [Meta](https://example.com/meta-ctv) - digiday.com (high-signal) - Date: 2026-05-04 - confidence: high
-"""
+    """
     message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-05", markdown, "daily")
-    assert "CTV, premium video inventory, cross-screen media buying, and performance measurement." in message
     assert "Useful broader context for BidMatrix CTV positioning: major ad platforms are exploring TV inventory as a performance and reach extension, but advertisers will still need measurable outcomes and verified environments." in message
     assert "Supports BidMatrix positioning around attribution resilience, privacy-safe optimization, and cleaner performance decision-making for app growth teams." not in message
-    assert "Attribution, MMP workflows, and privacy-safe measurement." not in message
+    assert "BidMatrix takeaway" in message
+    assert "What it affects" not in message
 
 
 def test_meta_ctv_summary_cleanup_avoids_awkward_fragment() -> None:
@@ -2749,9 +2752,9 @@ Found 1 core signal worth attention today.
 - Why it matters: Published 2026-05-05 as MMP and DSP workflows move closer together through AI-assisted buying.
 - BidMatrix angle: Supports BidMatrix positioning around attribution resilience, privacy-safe optimization, and cleaner performance decision-making for app growth teams.
 - Source: [Kochava](https://example.com/kochava-yahoo) - kochava.com (high-signal) - Date: 2026-05-05 - confidence: high
-"""
+    """
     message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-06", markdown, "daily")
-    assert "MMP-connected DSP workflows, agentic media buying, campaign optimization, and attribution-based decision support." in message
     assert "Shows how MMP and DSP workflows are moving closer together through AI-assisted media buying. Useful for BidMatrix positioning around AI-native campaign operations, attribution-connected optimization, and measurable buying decisions." in message
     assert "AI media buying, campaign optimization, and automated decision support." not in message
     assert "Supports BidMatrix positioning around attribution resilience, privacy-safe optimization, and cleaner performance decision-making for app growth teams." not in message
+    assert "What it affects" not in message
