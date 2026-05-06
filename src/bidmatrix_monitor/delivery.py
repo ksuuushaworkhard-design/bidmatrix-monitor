@@ -698,6 +698,8 @@ def _telegram_affects_line(item: dict[str, str]) -> str:
     happened = item.get("what_happened", "").lower()
     source = item.get("source", "").lower()
     text = " ".join([title, happened, source])
+    if "kochava" in text and any(term in text for term in ("yahoo dsp", "stationone", "agentic dsp", "dsp workflow")):
+        return "MMP-connected DSP workflows, agentic media buying, campaign optimization, and attribution-based decision support."
     if "meta" in text and any(term in text for term in ("ctv", "streaming", "tv oem", "freewheel", "magnite", "ssp")):
         return "CTV, premium video inventory, cross-screen media buying, and performance measurement."
     if any(term in text for term in ("openai", "chatgpt")) and any(term in text for term in ("conversion", "tracking", "pixel")):
@@ -726,6 +728,8 @@ def _telegram_bidmatrix_line(item: dict[str, str]) -> str:
     happened = item.get("what_happened", "").lower()
     source = item.get("source", "").lower()
     text = " ".join([title, happened, source])
+    if "kochava" in text and any(term in text for term in ("yahoo dsp", "stationone", "agentic dsp", "dsp workflow")):
+        return "Shows how MMP and DSP workflows are moving closer together through AI-assisted media buying. Useful for BidMatrix positioning around AI-native campaign operations, attribution-connected optimization, and measurable buying decisions."
     if "meta" in text and any(term in text for term in ("ctv", "streaming", "tv oem", "freewheel", "magnite", "ssp")):
         return "Useful broader context for BidMatrix CTV positioning: major ad platforms are exploring TV inventory as a performance and reach extension, but advertisers will still need measurable outcomes and verified environments."
     if any(term in text for term in ("openai", "chatgpt")) and any(term in text for term in ("conversion", "tracking", "pixel")):
