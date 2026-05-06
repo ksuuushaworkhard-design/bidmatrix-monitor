@@ -1,6 +1,9 @@
 name: BidMatrix Market Brief
 
 on:
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       mode:
@@ -20,11 +23,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
-      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-      BIDMATRIX_DELIVERY_ENABLED: 'true'
-      BIDMATRIX_DELIVERY_CHANNEL: telegram
       PYTHONUNBUFFERED: '1'
     steps:
       - name: Check out repository
@@ -40,12 +38,28 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]" || pip install -e .
 
+      - name: Run pull request checks
+        if: ${{ github.event_name == 'pull_request' }}
+        run: pytest
+
       - name: Run daily brief
         if: ${{ github.event_name == 'schedule' && github.event.schedule == '7 6 * * *' || github.event_name == 'workflow_dispatch' && inputs.mode == 'daily' }}
+        env:
+          EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          BIDMATRIX_DELIVERY_ENABLED: 'true'
+          BIDMATRIX_DELIVERY_CHANNEL: telegram
         run: bidmatrix-monitor
 
       - name: Run weekly brief
         if: ${{ github.event_name == 'schedule' && github.event.schedule == '0 14 * * 5' || github.event_name == 'workflow_dispatch' && inputs.mode == 'weekly' }}
+        env:
+          EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          BIDMATRIX_DELIVERY_ENABLED: 'true'
+          BIDMATRIX_DELIVERY_CHANNEL: telegram
         run: bidmatrix-monitor --weekly
 
       - name: Upload reports artifact
