@@ -4,6 +4,7 @@ import html
 import os
 import re
 import smtplib
+from datetime import date
 from email.message import EmailMessage
 from pathlib import Path
 from urllib.parse import urlencode
@@ -45,11 +46,20 @@ def _delivery_enabled(config: MonitorConfig, report_type: str) -> bool:
 
 def _send_telegram(subject: str, text: str, report_type: str) -> None:
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
     if not token or not chat_id:
         raise RuntimeError("Telegram delivery requires TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.")
 
     message = _telegram_message(subject, text, report_type)
+    if report_type == "daily":
+        reasons = _telegram_quality_gate_reasons(message)
+        if reasons:
+            print(f"QUALITY_GATE_FAILED: {'; '.join(reasons)}")
+            return
+    _post_telegram_message(token, chat_id, message)
+
+
+def _post_telegram_message(token: str, chat_id: str, message: str) -> None:
     data = urlencode(
         {
             "chat_id": chat_id,
@@ -64,11 +74,39 @@ def _send_telegram(subject: str, text: str, report_type: str) -> None:
         response.read()
 
 
+def _telegram_quality_gate_reasons(message: str) -> list[str]:
+    item_count = len(re.findall(r"^\d+\.\s+", message, flags=re.MULTILINE))
+    if not item_count:
+        return []
+
+    reasons: list[str] = []
+    if "<b>What it affects</b>" in message:
+        reasons.append("old_format_what_it_affects")
+    if "<b>Why it matters for BidMatrix</b>" in message:
+        reasons.append("old_format_why_it_matters_for_bidmatrix")
+    if len(re.findall(r"<b>How BidMatrix can use it</b>", message)) < item_count:
+        reasons.append("missing_how_bidmatrix_can_use_it")
+    if not re.search(r"https?://", message):
+        reasons.append("missing_source_url")
+    if re.search(r"^\d+\.\s+.*\bbidmatrix\b", message, flags=re.IGNORECASE | re.MULTILINE):
+        reasons.append("bidmatrix_self_item")
+    if "Date: 2025-" in message:
+        reasons.append("contains_2025_item")
+    broken_patterns = (
+        r"\bto enable\.",
+        r"\be\.g\.",
+        r"\(e\.g\.",
+        r"\(\s*$",
+    )
+    if any(re.search(pattern, message, flags=re.IGNORECASE | re.MULTILINE) for pattern in broken_patterns):
+        reasons.append("broken_fragment")
+    return reasons
 def _telegram_message(subject: str, text: str, report_type: str) -> str:
     if report_type != 'daily':
         return _telegram_weekly_message(subject, text)
 
     date_label = _date_from_subject(subject)
+    run_date = _subject_date(subject)
     title = f'<b>BidMatrix Daily Brief — {html.escape(date_label)}</b>'
     if 'Daily brief skipped: not enough relevant market signals found today.' in text:
         return '\n'.join([title, '', 'Daily brief skipped: not enough relevant market signals found today.'])
@@ -76,55 +114,60 @@ def _telegram_message(subject: str, text: str, report_type: str) -> str:
     items = _report_items(text)
     all_top_items = [item for item in items if item.get('section') == 'top']
     adjacent_items = [item for item in items if item.get('section') == 'adjacent']
-    top_items = _select_telegram_digest_items(all_top_items, limit=3)
-    intro = _daily_intro_line(text)
-    suggests = _section_bullets(text, "## What This Suggests")
-    angles = _section_bullets(text, "## BidMatrix Angles")
-    watch = _section_bullets(text, "## Watch Next")
-    background = _background_trend(text)
+    intro_line = _daily_intro_line(text)
     lines = [title]
+    top_items, top_stats = _filter_telegram_daily_items(all_top_items, run_date)
+    adjacent, adjacent_stats = _filter_telegram_daily_items(adjacent_items, run_date)
+    digest_items, selection_meta = _select_telegram_daily_items(top_items, adjacent, target=4, limit=4)
 
-    if top_items and intro.lower().startswith("found "):
-        lines.extend(["", "<b>Today's useful signals</b>", html.escape(_shorten(_sync_intro_count(intro, len(top_items)), 220))])
-        lines.extend(['', '<b>Top market signal</b>' if len(top_items) == 1 else '<b>Top market signals</b>'])
-        shown = top_items[:3]
-        for index, item in enumerate(shown, start=1):
-            lines.extend(_telegram_item(item, index))
-        if len(all_top_items) > len(shown):
-            lines.extend(["More items saved in the full report artifact.", ""])
-    elif all_top_items or adjacent_items:
-        raw_digest_items = all_top_items or adjacent_items
-        digest_items = _select_telegram_digest_items(raw_digest_items, limit=3)
-        lines.extend(["", "<b>Market Watch</b>", html.escape(_shorten(intro, 220)), "", "<b>Top market signals</b>"])
-        shown = digest_items[:3]
-        for index, item in enumerate(shown, start=1):
-            lines.extend(_telegram_watchlist_item(item, index))
-        if len(raw_digest_items) > len(shown):
-            lines.extend(["More items saved in the full report artifact.", ""])
+    if digest_items:
+        core_count = sum(1 for item in digest_items if _telegram_item_counts_as_core(item))
+        adjacent_count = len(digest_items) - core_count
+        if _is_market_watch_intro(intro_line) or not core_count:
+            if len(digest_items) == 1 and adjacent_count == 1:
+                lines.extend(["", "<b>Market Watch</b>", "No strong fresh BidMatrix-core signals found today. One adjacent market signal is worth watching."])
+            else:
+                lines.extend(["", "<b>Market Watch</b>", "No major core BidMatrix signal dominated today, but several relevant market moves are worth tracking."])
+        else:
+            recent_context_count = (
+                selection_meta["recent_14d_count"]
+                + selection_meta["recent_30d_count"]
+                + selection_meta["unknown_trusted_count"]
+            )
+            if selection_meta.get("confidence_relaxation_used"):
+                intro = "Fresh high-confidence signals were limited, so today’s digest includes the best fresh trusted market signal available."
+            elif not selection_meta["fresh_7d_count"] and recent_context_count:
+                intro = "Fresh signals were limited, so today’s digest uses the strongest recent market context."
+            elif selection_meta["fresh_7d_count"] and recent_context_count:
+                intro = (
+                    f"Found {selection_meta['fresh_7d_count']} fresh signal{'s' if selection_meta['fresh_7d_count'] != 1 else ''}, "
+                    f"supplemented with {recent_context_count} recent market context item{'s' if recent_context_count != 1 else ''}."
+                )
+            elif core_count > 0 and adjacent_count > 0:
+                intro = (
+                    f"Found {core_count} core signal{'s' if core_count != 1 else ''}, "
+                    f"supplemented with {adjacent_count} adjacent/recent market signal{'s' if adjacent_count != 1 else ''}."
+                )
+            elif selection_meta["fresh_7d_count"] and not selection_meta["recent_14d_count"] and not selection_meta["recent_30d_count"] and not selection_meta["unknown_trusted_count"]:
+                intro = f"Found {selection_meta['fresh_7d_count']} fresh BidMatrix-relevant signal{'s' if selection_meta['fresh_7d_count'] != 1 else ''} worth attention today."
+            elif selection_meta["unknown_trusted_count"]:
+                intro = "Fresh dated signals were limited, so this digest includes trusted recent market context."
+            elif "supplemented with" in intro_line.lower():
+                intro = intro_line
+            else:
+                intro = f"Found {core_count} BidMatrix-relevant signal{'s' if core_count != 1 else ''} worth attention today."
+            lines.extend(["", "<b>Today's useful signals</b>", html.escape(_sync_intro_count(intro, len(digest_items)))])
+
+        section_label = "<b>Market signal to watch</b>" if len(digest_items) == 1 and adjacent_count == 1 else "<b>Top market news</b>"
+        lines.extend(["", section_label])
+        for index, item in enumerate(digest_items[:4], start=1):
+            lines.extend(_telegram_daily_news_item(item, index))
     else:
         intro_chunks = _daily_intro_paragraphs(text)
-        heading = "<b>Monitor error</b>" if any("no Exa results were available" in chunk for chunk in intro_chunks) else "<b>Market Watch</b>"
-        lines.extend(["", heading])
-        for chunk in intro_chunks:
-            lines.append(html.escape(chunk))
-
-    if suggests:
-        lines.extend(["", "<b>What this suggests</b>"])
-        for value in suggests[:3]:
-            lines.append(f"- {html.escape(_executive_line(value, 180))}")
-
-    if angles:
-        lines.extend(["", "<b>BidMatrix angles</b>"])
-        for value in angles[:4]:
-            lines.append(f"- {html.escape(_executive_line(value, 170))}")
-
-    if watch:
-        lines.extend(["", "<b>Watch next</b>"])
-        for value in watch[:4]:
-            lines.append(f"- {html.escape(_executive_line(value, 160))}")
-
-    if background and background not in {'No useful background context was kept.', 'Background context, not a fresh daily signal.'} and not top_items:
-        lines.extend(['', '<b>Strategic context</b>', html.escape(_executive_line(background, 180))])
+        if any("no Exa results were available" in chunk for chunk in intro_chunks):
+            lines.extend(["", "<b>Monitor error</b>", "Market brief monitor ran, but no Exa results were available. Please check EXA_API_KEY, Exa response logs, or source/query configuration."])
+        else:
+            lines.extend(["", "No strong fresh market signals found today. The monitor will keep watching mobile UA, measurement, fraud, CTV, AI campaign ops, and app growth."])
 
     return _truncate_daily('\n'.join(lines), 3800)
 
@@ -406,7 +449,12 @@ def _shorten(text: str, max_chars: int) -> str:
 
 
 def _sync_intro_count(intro: str, count: int) -> str:
-    if "supplemented with" in intro.lower():
+    lowered = intro.lower()
+    if (
+        "supplemented with" in lowered
+        or "fresh signals were limited" in lowered
+        or "fresh high-confidence signals were limited" in lowered
+    ):
         return intro
     noun = "signal" if count == 1 else "signals"
     updated = re.sub(r"^Found\s+\d+\s+", f"Found {count} ", intro, count=1)
@@ -420,6 +468,390 @@ def _sync_intro_count(intro: str, count: int) -> str:
 
 def _source_name(item: dict[str, str]) -> str:
     return item.get("source") or item.get("url") or "source"
+
+
+def _telegram_daily_news_item(item: dict[str, str], index: int) -> list[str]:
+    lines = [
+        f"{index}. {html.escape(_clean_trailing_fragment(_shorten(item['title'], 170)))}",
+        "<b>What happened</b>",
+        html.escape(_telegram_what_happened_line(item)),
+        "<b>How BidMatrix can use it</b>",
+        html.escape(_telegram_bidmatrix_line(item)),
+        "<b>Source</b>",
+        html.escape(_source_name(item)),
+    ]
+    if item.get("url"):
+        lines.append(html.escape(item["url"]))
+    lines.append("")
+    return lines
+
+
+def _filter_telegram_daily_items(items: list[dict[str, str]], run_date: date | None) -> tuple[list[dict[str, str]], dict[str, int | dict[str, int]]]:
+    filtered: list[dict[str, str]] = []
+    low_confidence_fresh_trusted: list[dict[str, str]] = []
+    stats = {
+        "fresh_7d_count": 0,
+        "recent_14d_count": 0,
+        "recent_30d_count": 0,
+        "unknown_trusted_count": 0,
+        "future_date_rejected_count": 0,
+        "confidence_relaxation_used": False,
+        "date_quality_breakdown": {},
+    }
+    breakdown: dict[str, int] = {}
+    for item in items:
+        if _telegram_is_self_item(item):
+            continue
+        status = _telegram_date_status(item, run_date)
+        quality = status["quality"]
+        breakdown[quality] = breakdown.get(quality, 0) + 1
+        if quality == "future_invalid":
+            stats["future_date_rejected_count"] += 1
+            continue
+        if quality == "old_2025_or_earlier":
+            continue
+        if quality == "older_than_30d":
+            continue
+        if item.get("confidence") == "low":
+            if _telegram_can_relax_low_confidence(item, quality):
+                relaxed_item = dict(item)
+                relaxed_item["_telegram_date_quality"] = quality
+                relaxed_item["_telegram_confidence_relaxed"] = True
+                low_confidence_fresh_trusted.append(relaxed_item)
+            continue
+        if quality == "unknown_trusted":
+            if not _telegram_is_trusted_unknown(item):
+                continue
+            stats["unknown_trusted_count"] += 1
+        elif quality == "fresh_7d":
+            stats["fresh_7d_count"] += 1
+        elif quality == "recent_14d":
+            stats["recent_14d_count"] += 1
+        elif quality == "recent_30d":
+            stats["recent_30d_count"] += 1
+        else:
+            continue
+        item = dict(item)
+        item["_telegram_date_quality"] = quality
+        filtered.append(item)
+    if not filtered and low_confidence_fresh_trusted:
+        low_confidence_fresh_trusted.sort(
+            key=lambda item: (-_telegram_daily_priority(item), item.get("title", "").lower())
+        )
+        filtered = low_confidence_fresh_trusted[:2]
+        stats["fresh_7d_count"] = len(filtered)
+        stats["confidence_relaxation_used"] = True
+    stats["date_quality_breakdown"] = breakdown
+    return filtered, stats
+
+
+def _select_telegram_daily_items(
+    top_items: list[dict[str, str]],
+    adjacent_items: list[dict[str, str]],
+    *,
+    target: int = 3,
+    limit: int = 4,
+) -> tuple[list[dict[str, str]], dict[str, int]]:
+    selected: list[dict[str, str]] = []
+    seen_urls: set[str] = set()
+    seen_titles: set[str] = set()
+    seen_companies: set[str] = set()
+    seen_buckets: set[str] = set()
+    ranked_top = sorted(top_items, key=lambda item: (-_telegram_daily_priority(item), item.get("title", "").lower()))
+    ranked_adjacent = sorted(adjacent_items, key=lambda item: (-_telegram_daily_priority(item), item.get("title", "").lower()))
+    meta = {
+        "fresh_7d_count": 0,
+        "recent_14d_count": 0,
+        "recent_30d_count": 0,
+        "unknown_trusted_count": 0,
+        "confidence_relaxation_used": False,
+    }
+
+    def add_candidates(candidates: list[dict[str, str]], *, unique_bucket: bool, allowed_qualities: set[str]) -> None:
+        for item in candidates:
+            if len(selected) >= target:
+                return
+            if item.get("_telegram_date_quality") not in allowed_qualities:
+                continue
+            url = (item.get("url") or "").strip().lower()
+            title = (item.get("title") or "").strip().lower()
+            company = _telegram_item_company(item).strip().lower()
+            bucket = _telegram_daily_bucket(item)
+            if url and url in seen_urls:
+                continue
+            if title and title in seen_titles:
+                continue
+            if company and company in seen_companies:
+                continue
+            if unique_bucket and bucket in seen_buckets:
+                continue
+            selected.append(item)
+            if url:
+                seen_urls.add(url)
+            if title:
+                seen_titles.add(title)
+            if company:
+                seen_companies.add(company)
+            if bucket:
+                seen_buckets.add(bucket)
+            quality = item.get("_telegram_date_quality")
+            if quality == "fresh_7d":
+                meta["fresh_7d_count"] += 1
+            elif quality == "recent_14d":
+                meta["recent_14d_count"] += 1
+            elif quality == "recent_30d":
+                meta["recent_30d_count"] += 1
+            elif quality == "unknown_trusted":
+                meta["unknown_trusted_count"] += 1
+            if item.get("_telegram_confidence_relaxed"):
+                meta["confidence_relaxation_used"] = True
+
+    for allowed in (
+        {"fresh_7d"},
+        {"recent_14d"},
+        {"unknown_trusted"},
+        {"recent_30d"},
+    ):
+        add_candidates(ranked_top, unique_bucket=True, allowed_qualities=allowed)
+        if len(selected) < target:
+            add_candidates(ranked_adjacent, unique_bucket=True, allowed_qualities=allowed)
+    if len(selected) < 2:
+        for allowed in (
+            {"fresh_7d"},
+            {"recent_14d"},
+            {"unknown_trusted"},
+            {"recent_30d"},
+        ):
+            add_candidates(ranked_top, unique_bucket=False, allowed_qualities=allowed)
+            if len(selected) < 2:
+                add_candidates(ranked_adjacent, unique_bucket=False, allowed_qualities=allowed)
+    return selected[:limit], meta
+
+
+def _telegram_item_date(item: dict[str, str]) -> date | None:
+    source = item.get("source", "")
+    match = re.search(r"Date:\s*(\d{4}-\d{2}-\d{2})", source)
+    if not match:
+        return None
+    try:
+        return date.fromisoformat(match.group(1))
+    except ValueError:
+        return None
+
+
+def _telegram_is_self_item(item: dict[str, str]) -> bool:
+    text = " ".join([item.get("title", ""), item.get("source", ""), item.get("url", "")]).lower()
+    return "bidmatrix" in text
+
+
+def _telegram_date_status(item: dict[str, str], run_date: date | None) -> dict[str, str | int | None]:
+    published = _telegram_item_date(item)
+    if run_date is None:
+        return {"quality": "missing_or_unknown_date", "age_days": None}
+    if published is None:
+        return {"quality": "unknown_trusted" if _telegram_is_trusted_unknown(item) else "missing_or_unknown_date", "age_days": None}
+    if published.year < 2026:
+        return {"quality": "old_2025_or_earlier", "age_days": None}
+    age_days = (run_date - published).days
+    if age_days < 0:
+        return {"quality": "future_invalid", "age_days": age_days}
+    if age_days <= 7:
+        return {"quality": "fresh_7d", "age_days": age_days}
+    if age_days <= 14:
+        return {"quality": "recent_14d", "age_days": age_days}
+    if age_days <= 30:
+        return {"quality": "recent_30d", "age_days": age_days}
+    return {"quality": "older_than_30d", "age_days": age_days}
+
+
+def _telegram_is_trusted_unknown(item: dict[str, str]) -> bool:
+    source = (item.get("source") or "").lower()
+    title = (item.get("title") or "").lower()
+    body = " ".join([item.get("what_happened", ""), item.get("why_it_matters", ""), item.get("bidmatrix_angle", "")]).lower()
+    if "high-signal" not in source:
+        return False
+    if item.get("confidence") == "low":
+        return False
+    recent_markers = ("launch", "launched", "update", "updated", "announced", "report", "guidance", "privacy", "fraud", "ctv", "measurement", "attribution")
+    return any(term in title or term in body for term in recent_markers)
+
+
+def _telegram_can_relax_low_confidence(item: dict[str, str], quality: str) -> bool:
+    if quality != "fresh_7d":
+        return False
+    if _telegram_is_self_item(item):
+        return False
+    source = (item.get("source") or "").lower()
+    if "high-signal" not in source:
+        return False
+    if _telegram_daily_bucket(item) in {"general", "cross_screen"}:
+        return False
+    text = " ".join(
+        [
+            item.get("title", ""),
+            item.get("what_happened", ""),
+            item.get("why_it_matters", ""),
+            item.get("bidmatrix_angle", ""),
+            source,
+        ]
+    ).lower()
+    low_quality_markers = (
+        "product updates",
+        "latest features",
+        "release notes",
+        "roundup",
+        "highlights",
+        "weekly roundup",
+    )
+    return not any(marker in text for marker in low_quality_markers)
+
+
+def _telegram_item_counts_as_core(item: dict[str, str]) -> bool:
+    angle = " ".join(
+        [
+            item.get("bidmatrix_angle", ""),
+            item.get("content_angle", ""),
+            item.get("why_it_matters", ""),
+        ]
+    ).lower()
+    adjacent_markers = (
+        "broad cross-screen context",
+        "relevant only if",
+        "indirect",
+        "watchlist only",
+    )
+    if any(marker in angle for marker in adjacent_markers):
+        return False
+    return item.get("section") == "top"
+
+
+def _telegram_daily_bucket(item: dict[str, str]) -> str:
+    text = " ".join(
+        [
+            item.get("title", ""),
+            item.get("what_happened", ""),
+            item.get("why_it_matters", ""),
+            item.get("bidmatrix_angle", ""),
+            item.get("source", ""),
+        ]
+    ).lower()
+    if any(term in text for term in ("ctv", "connected tv", "streaming", "total tv")):
+        return "ctv"
+    if any(term in text for term in ("agent hub", "agentic", "ai media buying", "campaign optimization", "automation")):
+        return "ai_ops"
+    if any(term in text for term in ("attribution", "skan", "privacy sandbox", "mmp", "measurement", "conversion rules")):
+        return "measurement"
+    if any(term in text for term in ("fraud", "ivt", "invalid traffic", "traffic quality", "verified traffic")):
+        return "fraud"
+    if any(term in text for term in ("dsp", "ssp", "programmatic", "in-app inventory", "marketplace", "supply", "bidder")):
+        return "programmatic_supply"
+    if any(term in text for term in ("app growth", "user acquisition", "ua ", "installs")):
+        return "ua_growth"
+    if any(term in text for term in ("dooh", "out-of-home", "billboards", "cross-screen")):
+        return "cross_screen"
+    return "general"
+
+
+def _telegram_daily_priority(item: dict[str, str]) -> int:
+    bucket = _telegram_daily_bucket(item)
+    score = {"high": 12, "medium": 8, "low": 4}.get(item.get("confidence", "medium"), 6)
+    score += {
+        "measurement": 7,
+        "fraud": 6,
+        "ctv": 6,
+        "ai_ops": 5,
+        "programmatic_supply": 5,
+        "ua_growth": 5,
+        "cross_screen": 2,
+        "general": 3,
+    }.get(bucket, 3)
+    text = " ".join([item.get("title", ""), item.get("what_happened", ""), item.get("source", "")]).lower()
+    if any(term in text for term in ("sdk", "release notes", "ipv6", "release")):
+        score -= 4
+    quality = item.get("_telegram_date_quality")
+    if quality == "fresh_7d":
+        score += 8
+    elif quality == "recent_14d":
+        score += 4
+    elif quality == "unknown_trusted":
+        score -= 2
+    elif quality == "recent_30d":
+        score -= 4
+    return score
+
+
+def _telegram_affects_line(item: dict[str, str]) -> str:
+    bucket = _telegram_daily_bucket(item)
+    title = item.get("title", "").lower()
+    happened = item.get("what_happened", "").lower()
+    source = item.get("source", "").lower()
+    text = " ".join([title, happened, source])
+    if "kochava" in text and any(term in text for term in ("yahoo dsp", "stationone", "agentic dsp", "dsp workflow")):
+        return "MMP-connected DSP workflows, agentic media buying, campaign optimization, and attribution-based decision support."
+    if "meta" in text and any(term in text for term in ("ctv", "streaming", "tv oem", "freewheel", "magnite", "ssp")):
+        return "CTV, premium video inventory, cross-screen media buying, and performance measurement."
+    if any(term in text for term in ("openai", "chatgpt")) and any(term in text for term in ("conversion", "tracking", "pixel")):
+        return "Ad measurement, conversion tracking, and performance accountability for AI-native ad platforms."
+    if any(term in text for term in ("tiktok", "vistar", "dooh", "billboard", "out-of-home")):
+        return "Cross-screen creative execution, DOOH media, and potential future app-campaign measurement."
+    if any(term in text for term in ("fraud report", "state of fraud", "ivt", "invalid traffic", "fraud")):
+        return "Traffic quality, fraud detection, IVT risk, channel quality, and verified acquisition sources."
+    affects = {
+        "measurement": "Attribution, MMP workflows, and privacy-safe measurement.",
+        "fraud": "Traffic quality, fraud detection, IVT risk, channel quality, and verified acquisition sources.",
+        "ctv": "CTV as performance media for app marketers and cross-screen measurement.",
+        "ai_ops": "AI media buying, campaign optimization, and automated decision support.",
+        "programmatic_supply": "Programmatic supply paths, in-app inventory access, and DSP or SSP infrastructure.",
+        "ua_growth": "Mobile user acquisition, app growth, and performance marketing execution.",
+        "cross_screen": "Cross-screen campaign execution; adjacent context unless it becomes measurable for app campaigns.",
+        "general": "Mobile adtech strategy and partner or competitor positioning.",
+    }.get(bucket, "Mobile adtech strategy and partner or competitor positioning.")
+    if item.get("section") == "adjacent" and not affects.endswith("Adjacent context."):
+        return f"{affects} Adjacent context."
+    return affects
+
+
+def _telegram_bidmatrix_line(item: dict[str, str]) -> str:
+    title = item.get("title", "").lower()
+    happened = item.get("what_happened", "").lower()
+    source = item.get("source", "").lower()
+    text = " ".join([title, happened, source])
+    if "google" in text and any(term in text for term in ("incrementality", "data manager", "meridian", "geox")):
+        return "Use this as a sales and content angle around incrementality: more advertisers are looking beyond last-click reporting and need cleaner ways to prove whether media spend actually drives lift."
+    if "appsflyer" in text and any(term in text for term in ("state of fraud", "fraud report")):
+        return "Use this as support for content and sales conversations around verified traffic, fraud risk, and why clean acquisition sources matter for ROAS."
+    if "moloco" in text and any(term in text for term in ("ctv", "performance ctv")):
+        return "Use this in CTV positioning and BD conversations: app marketers increasingly expect TV inventory to work like measurable performance media, not just awareness."
+    if "kochava" in text and any(term in text for term in ("yahoo dsp", "stationone", "agentic dsp", "dsp workflow")):
+        return "Use this as partner and competitor monitoring: MMP and DSP workflows are moving closer together through AI-assisted media buying."
+    if "meta" in text and any(term in text for term in ("ctv", "streaming", "tv oem", "freewheel", "magnite", "ssp")):
+        return "Use this as broader CTV context in BD and positioning work: major ad platforms are exploring TV inventory as a performance and reach extension, but advertisers will still need measurable outcomes and verified environments."
+    if any(term in text for term in ("openai", "chatgpt")) and any(term in text for term in ("conversion", "tracking", "pixel")):
+        return "Use this as broader context for content and sales: AI-native ad platforms are moving toward measurable advertising, which reinforces the need for attribution clarity and performance safeguards."
+    base = _executive_line(item.get("bidmatrix_angle") or item.get("content_angle") or item["title"], 170)
+    if re.match(r"^(Supports|Strengthens) BidMatrix positioning around\b", base):
+        return re.sub(r"^(Supports|Strengthens) BidMatrix positioning around\s*", "Use this in positioning and sales conversations around ", base, count=1)
+    return base
+
+
+def _telegram_what_happened_line(item: dict[str, str]) -> str:
+    title = item.get("title", "").lower()
+    happened = item.get("what_happened") or item.get("title") or ""
+    source = item.get("source", "").lower()
+    text = " ".join([title, happened.lower(), source])
+    if "appsflyer" in text and any(term in text for term in ("state of fraud", "fraud report")):
+        return "The report highlights where fraud pressure is concentrating across channels, verticals, and acquisition patterns."
+    return _executive_line(happened, 180)
+
+
+def _is_market_watch_intro(intro: str) -> bool:
+    lowered = intro.lower()
+    return (
+        "no direct core bidmatrix signal dominated today" in lowered
+        or "no core bidmatrix-relevant signals found today" in lowered
+        or "strongest adjacent industry signals" in lowered
+        or lowered.startswith("exa returned results, but no fresh bidmatrix-core items passed the filters")
+    )
 
 
 def _select_telegram_digest_items(items: list[dict[str, str]], limit: int = 3) -> list[dict[str, str]]:
@@ -496,9 +928,13 @@ def _clean_trailing_fragment(text: str) -> str:
     original = text.rstrip()
     terminal = '?' if original.endswith('?') else '!' if original.endswith('!') else ''
     cleaned = text.rstrip(',;:.!?- ')
+    cleaned = re.sub(r"\(\s*e\.?g\.?\s*$", "", cleaned, flags=re.IGNORECASE).rstrip(' ,;:.!?-')
+    cleaned = re.sub(r"\(\s*$", "", cleaned).rstrip(' ,;:.!?-')
+    cleaned = re.sub(r"\be\.?g\.?\s*$", "", cleaned, flags=re.IGNORECASE).rstrip(' ,;:.!?-')
     trailing_phrases = [
         'built on', 'based on', 'real-time', 'real time', 'using', 'allowing',
-        'including', 'against', 'across', 'into', 'for', 'with', 'but', 'and'
+        'including', 'against', 'across', 'into', 'for', 'with', 'but', 'and',
+        'to enable', 'to support', 'to help', 'such as', 'like'
     ]
     lower = cleaned.lower()
     removed_fragment = False
@@ -518,6 +954,16 @@ def _clean_trailing_fragment(text: str) -> str:
 def _date_from_subject(subject: str) -> str:
     match = re.search(r"(\d{4}-\d{2}-\d{2})", subject)
     return match.group(1) if match else subject
+
+
+def _subject_date(subject: str) -> date | None:
+    match = re.search(r"(\d{4}-\d{2}-\d{2})", subject)
+    if not match:
+        return None
+    try:
+        return date.fromisoformat(match.group(1))
+    except ValueError:
+        return None
 
 
 def _executive_line(text: str, max_chars: int) -> str:
@@ -594,6 +1040,10 @@ def _naturalize_sentence(text: str) -> str:
         (
             r"^Introduces first benchmark for in-app ad quality.*$",
             "It gives advertisers and app teams a clearer way to compare ad quality inside mobile apps.",
+        ),
+        (
+            r"^Meta is holding exploratory meetings with SSPs like Magnite and FreeWheel, TV OEMs.*$",
+            "Meta is exploring CTV expansion through talks with SSPs, TV OEMs, and streaming partners.",
         ),
     ]
     for pattern, replacement in rewrites:
