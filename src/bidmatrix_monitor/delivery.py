@@ -98,7 +98,9 @@ def _telegram_message(subject: str, text: str, report_type: str) -> str:
                 + selection_meta["recent_30d_count"]
                 + selection_meta["unknown_trusted_count"]
             )
-            if not selection_meta["fresh_7d_count"] and recent_context_count:
+            if selection_meta.get("confidence_relaxation_used"):
+                intro = "Fresh high-confidence signals were limited, so today’s digest includes the best fresh trusted market signal available."
+            elif not selection_meta["fresh_7d_count"] and recent_context_count:
                 intro = "Fresh signals were limited, so today’s digest uses the strongest recent market context."
             elif selection_meta["fresh_7d_count"] and recent_context_count:
                 intro = (
@@ -411,7 +413,12 @@ def _shorten(text: str, max_chars: int) -> str:
 
 
 def _sync_intro_count(intro: str, count: int) -> str:
-    if "supplemented with" in intro.lower() or "fresh signals were limited" in intro.lower():
+    lowered = intro.lower()
+    if (
+        "supplemented with" in lowered
+        or "fresh signals were limited" in lowered
+        or "fresh high-confidence signals were limited" in lowered
+    ):
         return intro
     noun = "signal" if count == 1 else "signals"
     updated = re.sub(r"^Found\s+\d+\s+", f"Found {count} ", intro, count=1)
@@ -445,12 +452,14 @@ def _telegram_daily_news_item(item: dict[str, str], index: int) -> list[str]:
 
 def _filter_telegram_daily_items(items: list[dict[str, str]], run_date: date | None) -> tuple[list[dict[str, str]], dict[str, int | dict[str, int]]]:
     filtered: list[dict[str, str]] = []
+    low_confidence_fresh_trusted: list[dict[str, str]] = []
     stats = {
         "fresh_7d_count": 0,
         "recent_14d_count": 0,
         "recent_30d_count": 0,
         "unknown_trusted_count": 0,
         "future_date_rejected_count": 0,
+        "confidence_relaxation_used": False,
         "date_quality_breakdown": {},
     }
     breakdown: dict[str, int] = {}
@@ -468,6 +477,11 @@ def _filter_telegram_daily_items(items: list[dict[str, str]], run_date: date | N
         if quality == "older_than_30d":
             continue
         if item.get("confidence") == "low":
+            if _telegram_can_relax_low_confidence(item, quality):
+                relaxed_item = dict(item)
+                relaxed_item["_telegram_date_quality"] = quality
+                relaxed_item["_telegram_confidence_relaxed"] = True
+                low_confidence_fresh_trusted.append(relaxed_item)
             continue
         if quality == "unknown_trusted":
             if not _telegram_is_trusted_unknown(item):
@@ -484,6 +498,13 @@ def _filter_telegram_daily_items(items: list[dict[str, str]], run_date: date | N
         item = dict(item)
         item["_telegram_date_quality"] = quality
         filtered.append(item)
+    if not filtered and low_confidence_fresh_trusted:
+        low_confidence_fresh_trusted.sort(
+            key=lambda item: (-_telegram_daily_priority(item), item.get("title", "").lower())
+        )
+        filtered = low_confidence_fresh_trusted[:2]
+        stats["fresh_7d_count"] = len(filtered)
+        stats["confidence_relaxation_used"] = True
     stats["date_quality_breakdown"] = breakdown
     return filtered, stats
 
@@ -507,6 +528,7 @@ def _select_telegram_daily_items(
         "recent_14d_count": 0,
         "recent_30d_count": 0,
         "unknown_trusted_count": 0,
+        "confidence_relaxation_used": False,
     }
 
     def add_candidates(candidates: list[dict[str, str]], *, unique_bucket: bool, allowed_qualities: set[str]) -> None:
@@ -545,6 +567,8 @@ def _select_telegram_daily_items(
                 meta["recent_30d_count"] += 1
             elif quality == "unknown_trusted":
                 meta["unknown_trusted_count"] += 1
+            if item.get("_telegram_confidence_relaxed"):
+                meta["confidence_relaxation_used"] = True
 
     for allowed in (
         {"fresh_7d"},
@@ -614,6 +638,36 @@ def _telegram_is_trusted_unknown(item: dict[str, str]) -> bool:
         return False
     recent_markers = ("launch", "launched", "update", "updated", "announced", "report", "guidance", "privacy", "fraud", "ctv", "measurement", "attribution")
     return any(term in title or term in body for term in recent_markers)
+
+
+def _telegram_can_relax_low_confidence(item: dict[str, str], quality: str) -> bool:
+    if quality != "fresh_7d":
+        return False
+    if _telegram_is_self_item(item):
+        return False
+    source = (item.get("source") or "").lower()
+    if "high-signal" not in source:
+        return False
+    if _telegram_daily_bucket(item) in {"general", "cross_screen"}:
+        return False
+    text = " ".join(
+        [
+            item.get("title", ""),
+            item.get("what_happened", ""),
+            item.get("why_it_matters", ""),
+            item.get("bidmatrix_angle", ""),
+            source,
+        ]
+    ).lower()
+    low_quality_markers = (
+        "product updates",
+        "latest features",
+        "release notes",
+        "roundup",
+        "highlights",
+        "weekly roundup",
+    )
+    return not any(marker in text for marker in low_quality_markers)
 
 
 def _telegram_item_counts_as_core(item: dict[str, str]) -> bool:

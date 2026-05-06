@@ -598,6 +598,145 @@ Found 2 core signals worth attention today.
     assert 'Found 1 fresh BidMatrix-relevant signal worth attention today.' in message
 
 
+def test_fresh_low_confidence_trusted_item_is_allowed_when_no_higher_confidence_items_exist() -> None:
+    markdown = """# BidMatrix Daily Brief - 2026-05-06
+
+## Today's Useful Signals
+No major core BidMatrix signal dominated today, but several relevant market moves are worth tracking.
+
+## Top Market Signals
+### 1. Integral Ad Science Social Optimization
+- What happened: IAS reports brands using Social Optimization achieved lower suitability fail rates and lower CPMs across social campaigns.
+- Why it matters: Published 2026-05-04 as advertisers push harder on measurable quality and brand safety.
+- BidMatrix angle: Use this in positioning and sales conversations around media quality, measurement discipline, and cleaner decision-making.
+- Source: [IAS](https://example.com/ias) - integralads.com (high-signal) - Date: 2026-05-04 - confidence: low
+### 2. AppsFlyer product updates
+- What happened: AppsFlyer posted a roundup of product updates across several months.
+- Why it matters: Ongoing measurement platform iteration.
+- BidMatrix angle: Use this in positioning and sales conversations around attribution resilience.
+- Source: [AppsFlyer](https://example.com/appsflyer) - appsflyer.com (high-signal) - Date: unknown - confidence: low
+### 3. Apple AAK update
+- What happened: InMobi described Apple AdAttributionKit upgrades for iOS 18.4.
+- Why it matters: Useful background context for privacy measurement.
+- BidMatrix angle: Use this in positioning and sales conversations around privacy-safe optimization.
+- Source: [InMobi](https://example.com/aak) - inmobi.com (high-signal) - Date: 2025-06-24 - confidence: low
+"""
+    message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-06", markdown, "daily")
+    assert "Fresh high-confidence signals were limited, so today’s digest includes the best fresh trusted market signal available." in message
+    assert "Integral Ad Science Social Optimization" in message
+    assert "How BidMatrix can use it" in message
+    assert "AppsFlyer product updates" not in message
+    assert "Apple AAK update" not in message
+
+
+def test_low_confidence_unknown_date_item_is_still_rejected() -> None:
+    markdown = """# BidMatrix Daily Brief - 2026-05-06
+
+## Today's Useful Signals
+No major core BidMatrix signal dominated today, but several relevant market moves are worth tracking.
+
+## Top Market Signals
+### 1. AppsFlyer product updates
+- What happened: AppsFlyer posted a roundup of product updates across several months.
+- Why it matters: Ongoing measurement platform iteration.
+- BidMatrix angle: Use this in positioning and sales conversations around attribution resilience.
+- Source: [AppsFlyer](https://example.com/appsflyer) - appsflyer.com (high-signal) - Date: unknown - confidence: low
+"""
+    message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-06", markdown, "daily")
+    assert "No strong fresh market signals found today." in message
+    assert "AppsFlyer product updates" not in message
+
+
+def test_low_confidence_old_item_is_still_rejected() -> None:
+    markdown = """# BidMatrix Daily Brief - 2026-05-06
+
+## Today's Useful Signals
+No major core BidMatrix signal dominated today, but several relevant market moves are worth tracking.
+
+## Top Market Signals
+### 1. Apple AAK update
+- What happened: InMobi described Apple AdAttributionKit upgrades for iOS 18.4.
+- Why it matters: Useful background context for privacy measurement.
+- BidMatrix angle: Use this in positioning and sales conversations around privacy-safe optimization.
+- Source: [InMobi](https://example.com/aak) - inmobi.com (high-signal) - Date: 2025-06-24 - confidence: low
+"""
+    message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-06", markdown, "daily")
+    assert "No strong fresh market signals found today." in message
+    assert "Apple AAK update" not in message
+
+
+def test_low_confidence_untrusted_source_is_still_rejected() -> None:
+    markdown = """# BidMatrix Daily Brief - 2026-05-06
+
+## Today's Useful Signals
+No major core BidMatrix signal dominated today, but several relevant market moves are worth tracking.
+
+## Top Market Signals
+### 1. Mistplay rewarded growth move
+- What happened: Mistplay acquired MyChips to expand rewarded advertising supply.
+- Why it matters: Published 2026-05-04 as rewarded media grows in app acquisition.
+- BidMatrix angle: Use this as app-growth partner monitoring.
+- Source: [Mistplay](https://example.com/mistplay) - prnewswire.com (lower-priority) - Date: 2026-05-04 - confidence: low
+"""
+    message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-06", markdown, "daily")
+    assert "No strong fresh market signals found today." in message
+    assert "Mistplay rewarded growth move" not in message
+
+
+def test_medium_or_high_confidence_item_beats_low_confidence_relaxation() -> None:
+    markdown = """# BidMatrix Daily Brief - 2026-05-06
+
+## Today's Useful Signals
+Found 2 core signals worth attention today.
+
+## Top Market Signals
+### 1. Integral Ad Science Social Optimization
+- What happened: IAS reports brands using Social Optimization achieved lower suitability fail rates and lower CPMs across social campaigns.
+- Why it matters: Published 2026-05-04 as advertisers push harder on measurable quality and brand safety.
+- BidMatrix angle: Use this in positioning and sales conversations around media quality, measurement discipline, and cleaner decision-making.
+- Source: [IAS](https://example.com/ias) - integralads.com (high-signal) - Date: 2026-05-04 - confidence: low
+### 2. Moloco performance CTV
+- What happened: Moloco launched performance CTV with MMP attribution and measurable ROI across streaming inventory.
+- Why it matters: Published 2026-05-05 as app marketers push CTV toward measurable performance outcomes.
+- BidMatrix angle: Gives BidMatrix a concrete angle on transparent CTV, verified environments, and performance measurement beyond impressions.
+- Source: [Moloco](https://example.com/moloco) - moloco.com (high-signal) - Date: 2026-05-05 - confidence: high
+"""
+    message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-06", markdown, "daily")
+    assert "Found 1 fresh BidMatrix-relevant signal worth attention today." in message
+    assert "Fresh high-confidence signals were limited" not in message
+    assert "Moloco performance CTV" in message
+
+
+def test_confidence_relaxation_replay_uses_actionable_format() -> None:
+    markdown = """# BidMatrix Daily Brief - 2026-05-06
+
+## Today's Useful Signals
+No major core BidMatrix signal dominated today, but several relevant market moves are worth tracking.
+
+## Top Market Signals
+### 1. Integral Ad Science Social Optimization
+- What happened: IAS reports brands using Social Optimization achieved lower suitability fail rates and lower CPMs across social campaigns.
+- Why it matters: Published 2026-05-04 as advertisers push harder on measurable quality and brand safety.
+- BidMatrix angle: Use this in positioning and sales conversations around media quality, measurement discipline, and cleaner decision-making.
+- Source: [IAS](https://example.com/ias) - integralads.com (high-signal) - Date: 2026-05-04 - confidence: low
+### 2. AppsFlyer product updates
+- What happened: AppsFlyer posted a roundup of product updates across several months.
+- Why it matters: Ongoing measurement platform iteration.
+- BidMatrix angle: Use this in positioning and sales conversations around attribution resilience.
+- Source: [AppsFlyer](https://example.com/appsflyer) - appsflyer.com (high-signal) - Date: unknown - confidence: low
+### 3. Apple AAK update
+- What happened: InMobi described Apple AdAttributionKit upgrades for iOS 18.4.
+- Why it matters: Useful background context for privacy measurement.
+- BidMatrix angle: Use this in positioning and sales conversations around privacy-safe optimization.
+- Source: [InMobi](https://example.com/aak) - inmobi.com (high-signal) - Date: 2025-06-24 - confidence: low
+"""
+    message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-06", markdown, "daily")
+    assert "Fresh high-confidence signals were limited, so today’s digest includes the best fresh trusted market signal available." in message
+    assert "<b>What happened</b>" in message
+    assert "<b>How BidMatrix can use it</b>" in message
+    assert "<b>Source</b>" in message
+
+
 def test_empty_strategic_context_is_not_rendered_in_telegram() -> None:
     markdown = """# BidMatrix Daily Brief - 2026-04-29
 
