@@ -46,11 +46,20 @@ def _delivery_enabled(config: MonitorConfig, report_type: str) -> bool:
 
 def _send_telegram(subject: str, text: str, report_type: str) -> None:
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
     if not token or not chat_id:
         raise RuntimeError("Telegram delivery requires TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.")
 
     message = _telegram_message(subject, text, report_type)
+    if report_type == "daily":
+        reasons = _telegram_quality_gate_reasons(message)
+        if reasons:
+            print(f"QUALITY_GATE_FAILED: {'; '.join(reasons)}")
+            return
+    _post_telegram_message(token, chat_id, message)
+
+
+def _post_telegram_message(token: str, chat_id: str, message: str) -> None:
     data = urlencode(
         {
             "chat_id": chat_id,
@@ -65,6 +74,33 @@ def _send_telegram(subject: str, text: str, report_type: str) -> None:
         response.read()
 
 
+def _telegram_quality_gate_reasons(message: str) -> list[str]:
+    item_count = len(re.findall(r"^\d+\.\s+", message, flags=re.MULTILINE))
+    if not item_count:
+        return []
+
+    reasons: list[str] = []
+    if "<b>What it affects</b>" in message:
+        reasons.append("old_format_what_it_affects")
+    if "<b>Why it matters for BidMatrix</b>" in message:
+        reasons.append("old_format_why_it_matters_for_bidmatrix")
+    if len(re.findall(r"<b>How BidMatrix can use it</b>", message)) < item_count:
+        reasons.append("missing_how_bidmatrix_can_use_it")
+    if not re.search(r"https?://", message):
+        reasons.append("missing_source_url")
+    if re.search(r"^\d+\.\s+.*\bbidmatrix\b", message, flags=re.IGNORECASE | re.MULTILINE):
+        reasons.append("bidmatrix_self_item")
+    if "Date: 2025-" in message:
+        reasons.append("contains_2025_item")
+    broken_patterns = (
+        r"\bto enable\.",
+        r"\be\.g\.",
+        r"\(e\.g\.",
+        r"\(\s*$",
+    )
+    if any(re.search(pattern, message, flags=re.IGNORECASE | re.MULTILINE) for pattern in broken_patterns):
+        reasons.append("broken_fragment")
+    return reasons
 def _telegram_message(subject: str, text: str, report_type: str) -> str:
     if report_type != 'daily':
         return _telegram_weekly_message(subject, text)

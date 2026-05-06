@@ -5,7 +5,8 @@ from bidmatrix_monitor.intelligence import build_report, dedupe_items
 from bidmatrix_monitor.models import MonitorConfig, NewsItem, OutputSettings, SearchSettings, SourceConfig, Topic
 from bidmatrix_monitor.render import render_markdown, _event_line
 from bidmatrix_monitor.weekly import render_weekly_markdown
-from bidmatrix_monitor.delivery import _telegram_message
+from bidmatrix_monitor import delivery as delivery_module
+from bidmatrix_monitor.delivery import _send_telegram, _telegram_message, _telegram_quality_gate_reasons
 from bidmatrix_monitor.exa_client import ExaCollectionStats, ExaMonitorClient
 
 
@@ -383,6 +384,117 @@ Found 1 core signal worth attention today.
     assert "What this suggests" not in message
     assert "BidMatrix angles" not in message
     assert "Watch next" not in message
+
+
+def test_quality_gate_blocks_old_telegram_format() -> None:
+    message = """<b>BidMatrix Daily Brief — 2026-05-06</b>
+
+<b>Top market news</b>
+1. Test item
+<b>What happened</b>
+Test.
+<b>What it affects</b>
+Measurement.
+<b>Why it matters for BidMatrix</b>
+Test.
+<b>Source</b>
+Example
+https://example.com/test
+"""
+    reasons = _telegram_quality_gate_reasons(message)
+    assert "old_format_what_it_affects" in reasons
+    assert "old_format_why_it_matters_for_bidmatrix" in reasons
+
+
+def test_quality_gate_blocks_bidmatrix_self_item() -> None:
+    message = """<b>BidMatrix Daily Brief — 2026-05-06</b>
+
+<b>Top market news</b>
+1. BidMatrix launches new UA kit
+<b>What happened</b>
+Test.
+<b>How BidMatrix can use it</b>
+Test.
+<b>Source</b>
+Example
+https://example.com/test
+"""
+    assert "bidmatrix_self_item" in _telegram_quality_gate_reasons(message)
+
+
+def test_quality_gate_blocks_2025_item() -> None:
+    message = """<b>BidMatrix Daily Brief — 2026-05-06</b>
+
+<b>Top market news</b>
+1. Old item
+<b>What happened</b>
+Test.
+<b>How BidMatrix can use it</b>
+Test.
+<b>Source</b>
+Example - Date: 2025-06-24
+https://example.com/test
+"""
+    assert "contains_2025_item" in _telegram_quality_gate_reasons(message)
+
+
+def test_quality_gate_allows_valid_simplified_format() -> None:
+    message = """<b>BidMatrix Daily Brief — 2026-05-06</b>
+
+<b>Top market news</b>
+1. AppsFlyer fraud report
+<b>What happened</b>
+The report highlights where fraud pressure is concentrating across channels, verticals, and acquisition patterns.
+<b>How BidMatrix can use it</b>
+Use this as support for content and sales conversations around verified traffic, fraud risk, and why clean acquisition sources matter for ROAS.
+<b>Source</b>
+AppsFlyer - appsflyer.com (high-signal) - Date: 2026-05-03 - confidence: medium
+https://example.com/fraud
+    """
+    assert _telegram_quality_gate_reasons(message) == []
+
+
+def test_quality_gate_blocks_bad_daily_send(monkeypatch) -> None:
+    posted: list[object] = []
+
+    def fake_urlopen(request, timeout=30):  # pragma: no cover
+        posted.append(request)
+        raise AssertionError("urlopen should not be called when quality gate fails")
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "prod-chat")
+    monkeypatch.setattr(delivery_module, "urlopen", fake_urlopen)
+    monkeypatch.setattr(
+        delivery_module,
+        "_telegram_message",
+        lambda subject, text, report_type: """<b>BidMatrix Daily Brief — 2026-05-06</b>
+
+<b>Top market news</b>
+1. BidMatrix self item
+<b>What happened</b>
+Test.
+<b>How BidMatrix can use it</b>
+Test.
+<b>Source</b>
+Example
+https://example.com/test
+""",
+    )
+
+    markdown = """# BidMatrix Daily Brief - 2026-05-06
+
+## Today's Useful Signal
+Found 1 core signal worth attention today.
+
+## Top Market Signal
+### 1. Placeholder item
+- What happened: Test.
+- Why it matters: Test.
+- BidMatrix angle: Test.
+- Source: [Example](https://example.com/test) - example.com (high-signal) - Date: 2026-05-05 - confidence: high
+"""
+    _send_telegram("BidMatrix Daily Market Brief - 2026-05-06", markdown, "daily")
+    assert posted == []
 
 
 def test_overwolf_gamer_grid_is_adjacent_not_core() -> None:
