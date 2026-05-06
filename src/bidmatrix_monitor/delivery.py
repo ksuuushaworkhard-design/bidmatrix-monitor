@@ -432,7 +432,7 @@ def _telegram_daily_news_item(item: dict[str, str], index: int) -> list[str]:
         f"{index}. {html.escape(_clean_trailing_fragment(_shorten(item['title'], 170)))}",
         "<b>What happened</b>",
         html.escape(_telegram_what_happened_line(item)),
-        "<b>BidMatrix takeaway</b>",
+        "<b>How BidMatrix can use it</b>",
         html.escape(_telegram_bidmatrix_line(item)),
         "<b>Source</b>",
         html.escape(_source_name(item)),
@@ -726,13 +726,22 @@ def _telegram_bidmatrix_line(item: dict[str, str]) -> str:
     happened = item.get("what_happened", "").lower()
     source = item.get("source", "").lower()
     text = " ".join([title, happened, source])
+    if "google" in text and any(term in text for term in ("incrementality", "data manager", "meridian", "geox")):
+        return "Use this as a sales and content angle around incrementality: more advertisers are looking beyond last-click reporting and need cleaner ways to prove whether media spend actually drives lift."
+    if "appsflyer" in text and any(term in text for term in ("state of fraud", "fraud report")):
+        return "Use this as support for content and sales conversations around verified traffic, fraud risk, and why clean acquisition sources matter for ROAS."
+    if "moloco" in text and any(term in text for term in ("ctv", "performance ctv")):
+        return "Use this in CTV positioning and BD conversations: app marketers increasingly expect TV inventory to work like measurable performance media, not just awareness."
     if "kochava" in text and any(term in text for term in ("yahoo dsp", "stationone", "agentic dsp", "dsp workflow")):
-        return "Shows how MMP and DSP workflows are moving closer together through AI-assisted media buying. Useful for BidMatrix positioning around AI-native campaign operations, attribution-connected optimization, and measurable buying decisions."
+        return "Use this as partner and competitor monitoring: MMP and DSP workflows are moving closer together through AI-assisted media buying."
     if "meta" in text and any(term in text for term in ("ctv", "streaming", "tv oem", "freewheel", "magnite", "ssp")):
-        return "Useful broader context for BidMatrix CTV positioning: major ad platforms are exploring TV inventory as a performance and reach extension, but advertisers will still need measurable outcomes and verified environments."
+        return "Use this as broader CTV context in BD and positioning work: major ad platforms are exploring TV inventory as a performance and reach extension, but advertisers will still need measurable outcomes and verified environments."
     if any(term in text for term in ("openai", "chatgpt")) and any(term in text for term in ("conversion", "tracking", "pixel")):
-        return "Useful as broader context: AI platforms are moving toward measurable advertising, which reinforces the need for attribution clarity and performance safeguards."
-    return _executive_line(item.get("bidmatrix_angle") or item.get("content_angle") or item["title"], 170)
+        return "Use this as broader context for content and sales: AI-native ad platforms are moving toward measurable advertising, which reinforces the need for attribution clarity and performance safeguards."
+    base = _executive_line(item.get("bidmatrix_angle") or item.get("content_angle") or item["title"], 170)
+    if re.match(r"^(Supports|Strengthens) BidMatrix positioning around\b", base):
+        return re.sub(r"^(Supports|Strengthens) BidMatrix positioning around\s*", "Use this in positioning and sales conversations around ", base, count=1)
+    return base
 
 
 def _telegram_what_happened_line(item: dict[str, str]) -> str:

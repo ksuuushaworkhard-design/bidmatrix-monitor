@@ -374,7 +374,8 @@ Found 1 core signal worth attention today.
     message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-05", markdown, "daily")
     assert "Top market news" in message
     assert "What happened" in message
-    assert "BidMatrix takeaway" in message
+    assert "How BidMatrix can use it" in message
+    assert "BidMatrix takeaway" not in message
     assert "What it affects" not in message
     assert "Why it matters for BidMatrix" not in message
     assert "Source" in message
@@ -2562,10 +2563,10 @@ Found 1 core signal worth attention today.
 - What happened: TikTok partnered with Vistar Media to reformat vertical ads into DOOH billboards.
 - Why it matters: Published 2026-05-04 as cross-screen creative execution expands.
 - BidMatrix angle: Broad cross-screen context; relevant only if DOOH becomes measurable for app campaigns or retargeting.
-- Source: [TikTok x Vistar](https://example.com/tiktok) - digiday.com (high-signal) - Date: 2026-05-04 - confidence: high
+    - Source: [TikTok x Vistar](https://example.com/tiktok) - digiday.com (high-signal) - Date: 2026-05-04 - confidence: high
     """
     message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-05", markdown, "daily")
-    assert "BidMatrix takeaway" in message
+    assert "How BidMatrix can use it" in message
     assert "Broad cross-screen context — relevant only if DOOH becomes measurable for app campaigns or retargeting." in message
     assert "What it affects" not in message
 
@@ -2586,7 +2587,8 @@ Found 1 core signal worth attention today.
     message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-05", markdown, "daily")
     assert "The report highlights where fraud pressure is concentrating across channels, verticals, and acquisition patterns." in message
     assert "AppsFlyer released a fraud report covering fraud risk, channel quality, verified traffic, and IVT patterns." not in message
-    assert "BidMatrix takeaway" in message
+    assert "How BidMatrix can use it" in message
+    assert "Use this as support for content and sales conversations around verified traffic, fraud risk, and why clean acquisition sources matter for ROAS." in message
 
 
 def test_mixed_core_and_adjacent_digest_gets_honest_intro() -> None:
@@ -2646,11 +2648,11 @@ Found 1 core signal worth attention today.
 - What happened: OpenAI added a conversion tracking pixel to help advertisers measure conversions across ChatGPT ad experiences.
 - Why it matters: Published 2026-04-16 as AI-native ad platforms move toward measurable performance accountability.
 - BidMatrix angle: Supports BidMatrix positioning around attribution resilience and cleaner performance decision-making.
-- Source: [OpenAI](https://example.com/openai) - digiday.com (high-signal) - Date: 2026-04-16 - confidence: high
+    - Source: [OpenAI](https://example.com/openai) - digiday.com (high-signal) - Date: 2026-04-16 - confidence: high
     """
     message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-05", markdown, "daily")
-    assert "Useful as broader context: AI platforms are moving toward measurable advertising, which reinforces the need for attribution clarity and performance safeguards." in message
-    assert "BidMatrix takeaway" in message
+    assert "Use this as broader context for content and sales: AI-native ad platforms are moving toward measurable advertising, which reinforces the need for attribution clarity and performance safeguards." in message
+    assert "How BidMatrix can use it" in message
     assert "What it affects" not in message
 
 
@@ -2713,12 +2715,12 @@ Found 1 core signal worth attention today.
 - What happened: Meta is holding exploratory meetings with SSPs like Magnite and FreeWheel, TV OEMs, and streaming partners.
 - Why it matters: Published 2026-05-04 as major ad platforms explore CTV distribution and monetization.
 - BidMatrix angle: Supports BidMatrix positioning around attribution resilience, privacy-safe optimization, and cleaner performance decision-making for app growth teams.
-- Source: [Meta](https://example.com/meta-ctv) - digiday.com (high-signal) - Date: 2026-05-04 - confidence: high
+    - Source: [Meta](https://example.com/meta-ctv) - digiday.com (high-signal) - Date: 2026-05-04 - confidence: high
     """
     message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-05", markdown, "daily")
-    assert "Useful broader context for BidMatrix CTV positioning: major ad platforms are exploring TV inventory as a performance and reach extension, but advertisers will still need measurable outcomes and verified environments." in message
+    assert "Use this as broader CTV context in BD and positioning work: major ad platforms are exploring TV inventory as a performance and reach extension, but advertisers will still need measurable outcomes and verified environments." in message
     assert "Supports BidMatrix positioning around attribution resilience, privacy-safe optimization, and cleaner performance decision-making for app growth teams." not in message
-    assert "BidMatrix takeaway" in message
+    assert "How BidMatrix can use it" in message
     assert "What it affects" not in message
 
 
@@ -2754,7 +2756,44 @@ Found 1 core signal worth attention today.
 - Source: [Kochava](https://example.com/kochava-yahoo) - kochava.com (high-signal) - Date: 2026-05-05 - confidence: high
     """
     message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-06", markdown, "daily")
-    assert "Shows how MMP and DSP workflows are moving closer together through AI-assisted media buying. Useful for BidMatrix positioning around AI-native campaign operations, attribution-connected optimization, and measurable buying decisions." in message
+    assert "Use this as partner and competitor monitoring: MMP and DSP workflows are moving closer together through AI-assisted media buying." in message
     assert "AI media buying, campaign optimization, and automated decision support." not in message
     assert "Supports BidMatrix positioning around attribution resilience, privacy-safe optimization, and cleaner performance decision-making for app growth teams." not in message
     assert "What it affects" not in message
+
+
+def test_google_incrementality_item_gets_practical_use_line() -> None:
+    markdown = """# BidMatrix Daily Brief - 2026-05-06
+
+## Today's Useful Signals
+Found 1 fresh BidMatrix-relevant signal worth attention today.
+
+## Top Market Signals
+### 1. Google Ads measurement tooling for incrementality
+- What happened: AdExchanger reports that Google announced updates to Google Ads' Data Manager.
+- Why it matters: Published 2026-05-05 as advertisers push for cleaner measurement and lift testing.
+- BidMatrix angle: Supports BidMatrix positioning around attribution resilience, privacy-safe optimization, and cleaner performance decision-making for app growth teams.
+- Source: [Google Ads adds new tools for mapping incrementality](https://example.com/google) - adexchanger.com (high-signal) - Date: 2026-05-05 - confidence: high
+"""
+    message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-06", markdown, "daily")
+    assert "How BidMatrix can use it" in message
+    assert "Use this as a sales and content angle around incrementality: more advertisers are looking beyond last-click reporting and need cleaner ways to prove whether media spend actually drives lift." in message
+    assert "Supports BidMatrix positioning around" not in message
+
+
+def test_moloco_ctv_item_gets_practical_ctv_use_line() -> None:
+    markdown = """# BidMatrix Daily Brief - 2026-05-06
+
+## Today's Useful Signals
+Found 1 fresh BidMatrix-relevant signal worth attention today.
+
+## Top Market Signals
+### 1. Moloco performance CTV
+- What happened: Moloco launched performance CTV with MMP attribution and measurable ROI across streaming inventory.
+- Why it matters: Published 2026-05-05 as app marketers push CTV toward measurable performance outcomes.
+- BidMatrix angle: Gives BidMatrix a concrete angle on transparent CTV, verified environments, and performance measurement beyond impressions.
+- Source: [Moloco](https://example.com/moloco) - moloco.com (high-signal) - Date: 2026-05-05 - confidence: high
+"""
+    message = _telegram_message("BidMatrix Daily Market Brief - 2026-05-06", markdown, "daily")
+    assert "Use this in CTV positioning and BD conversations: app marketers increasingly expect TV inventory to work like measurable performance media, not just awareness." in message
+    assert "How BidMatrix can use it" in message

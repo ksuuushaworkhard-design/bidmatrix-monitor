@@ -13,6 +13,39 @@ The product goal is not a one-item alert. It is a compact, useful market-news di
 - honest about freshness and fallback level
 
 
+## Channel Audience And Purpose
+
+The Telegram channel audience is:
+- BidMatrix marketers
+- Business Development managers
+- sales and other client-facing team members
+
+The channel purpose is:
+- not just to list industry news
+- but to provide actionable industry intelligence that helps the team plan marketing, BD, partnerships, positioning, sales conversations, and content
+
+Daily brief should answer:
+1. What happened?
+2. What part of the market does it affect?
+3. Why should BidMatrix care?
+4. How can marketing or BD use this?
+
+The content should be useful for:
+- LinkedIn and content ideas
+- PR and commentary angles
+- partner outreach
+- sales talking points
+- client conversation hooks
+- competitor and partner monitoring
+- positioning updates
+
+Avoid:
+- generic summaries
+- one-off news with no clear BidMatrix use
+- overly technical details unless they affect marketing or BD decisions
+- old context unless it helps explain a current move
+
+
 ## Main Repo
 
 Primary working repo:
@@ -155,10 +188,25 @@ Current target shape:
 
 Telegram item shape is intentionally compact:
 - title
-- why it matters
-- BidMatrix angle
-- action
+- what happened
+- BidMatrix takeaway
 - source
+
+Preferred Telegram item format:
+
+1. `[Company / topic] — [short news headline]`
+
+What happened:
+- 1 concise sentence.
+
+Why it matters for the market:
+- 1 concise sentence about the affected market area: mobile UA, attribution, fraud, CTV, programmatic, AI media buying, traffic quality, partnerships, and similar areas.
+
+How BidMatrix can use it:
+- 1 practical sentence for marketing, BD, sales, or positioning.
+
+Source:
+- title + domain + URL
 
 Do not expand long `What happened` blocks in Telegram unless specifically needed.
 
