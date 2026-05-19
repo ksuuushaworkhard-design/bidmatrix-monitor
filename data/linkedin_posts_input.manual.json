@@ -1,0 +1,21 @@
+{
+  "sample_note": "Manual LinkedIn Watch input built only from user-provided post text and URLs. No scraping or automated fetching was used.",
+  "posts": [
+    {
+      "source_name": "Gadi Eliashiv",
+      "post_url": "https://www.linkedin.com/posts/gadie_major-announcement-singular-ai-our-ugcPost-7394838073383030784-leJz?utm_source=share&utm_medium=member_desktop&rcm=ACoAAClUSvsBkf_ibzCtDVNe7XiSA_SK4YYVEJI",
+      "post_text": "🚨 Major announcement - Singular AI - our platform for marketing agents 🚨\n\nThe best data wins, and Singular's customers get the best data. But not everybody has the ability to make use of that data. With AI, and especially the models that were released in the past year, all of this changes.\n\nSingular AI is our platform for building AI agents that think and acts like your best employee. Infused with the most complete and granular data, purposely built yet customizable context, ability to reason and take actions autonomously, and the goal to solve real world use-cases that our customers face.\n\nAs a developer, I know what insane productivity gain I got when I stopped copy & pasting code into ChatGPT, and started using a code agent like Cursor or Claude Code. Singular AI can do the same for marketers.",
+      "published_at": "2025-11-13",
+      "collected_at": "2026-05-19T00:00:00Z",
+      "topic_tags": ["MMP", "attribution", "AI media buying", "agentic workflows", "measurement"]
+    },
+    {
+      "source_name": "Jason Fairchild",
+      "post_url": "https://www.linkedin.com/posts/jasonfairchild_performance-advertising-today-boils-down-share-7444848216396894209-KnE8?utm_source=share&utm_medium=member_desktop&rcm=ACoAAClUSvsBkf_ibzCtDVNe7XiSA_SK4YYVEJI",
+      "post_text": "Performance advertising today boils down to trust.\n\nIn this week’s newsletter, I sat down with our Chief Customer Officer, Heather Carver, to talk about how platforms can earn that trust and what advertisers are actually looking for from performance platforms today.\n\nOne theme came up quickly: a lot of buyers are frustrated by what Heather calls “opacity disguised as performance.”\n\nAutomation and AI are essential for modern advertising, but they shouldn’t hide how decisions are made. Advertisers need visibility into how signals drive optimization, validate outcomes, and influence strategy.\n\nBecause in the long run, budgets grow when advertisers understand what’s actually driving performance.\n\nLink in the comments.",
+      "published_at": "2026-03-31",
+      "collected_at": "2026-05-19T00:00:00Z",
+      "topic_tags": ["CTV", "performance TV", "AI media buying", "programmatic", "traffic quality", "measurement"]
+    }
+  ]
+}
