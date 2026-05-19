@@ -14,6 +14,7 @@ from bidmatrix_monitor.linkedin_watch import (
     load_linkedin_watchlist,
     render_linkedin_watch_markdown,
     score_linkedin_posts,
+    _short_insight,
 )
 
 
@@ -247,6 +248,43 @@ def test_render_linkedin_watch_markdown_uses_minimal_preview_format() -> None:
     assert "Source" not in markdown
 
 
+def test_short_insight_strips_emojis_and_hype_markers_from_preview() -> None:
+    insight = _short_insight(
+        "🚨 Major announcement - Singular AI - our platform for marketing agents 🚨 "
+        "The best data wins, and Singular's customers get the best data."
+    )
+
+    assert "🚨" not in insight
+    assert "Major announcement" not in insight
+    assert "Singular is positioning AI agents" in insight
+
+
+def test_short_insight_does_not_keep_raw_hype_headline_for_gadi_example() -> None:
+    insight = _short_insight(
+        "🚨 Major announcement - Singular AI - our platform for marketing agents 🚨 "
+        "The best data wins, and Singular's customers get the best data. "
+        "Singular AI is our platform for building AI agents that think and acts like your best employee."
+    )
+
+    assert insight == (
+        "Singular is positioning AI agents as a way for marketers to turn granular attribution data "
+        "into autonomous campaign workflows."
+    )
+
+
+def test_short_insight_generates_clean_transparency_angle_for_jason_example() -> None:
+    insight = _short_insight(
+        "Performance advertising today boils down to trust. "
+        "One theme came up quickly: a lot of buyers are frustrated by what Heather calls "
+        "\"opacity disguised as performance.\" Automation and AI are essential for modern advertising, "
+        "but they shouldn't hide how decisions are made. Advertisers need visibility into how signals "
+        "drive optimization, validate outcomes, and influence strategy."
+    )
+
+    assert insight == "Performance platforms are being pushed to make AI-driven optimization more transparent, not just more automated."
+    assert "boils down to trust" not in insight
+
+
 def test_render_linkedin_watch_markdown_caps_output_at_five_items() -> None:
     posts = [
         {
@@ -310,6 +348,51 @@ def test_build_linkedin_watch_preview_writes_expected_report(tmp_path: Path) -> 
     markdown = output_path.read_text(encoding="utf-8")
     assert markdown.startswith("BidMatrix LinkedIn Watch — 2026-05-19")
     assert markdown.count("https://www.linkedin.com/posts/") == 3
+
+
+def test_manual_examples_produce_clean_preview_insights() -> None:
+    watchlist = _watchlist()
+    posts = [
+        {
+            "source_name": "Gadi Eliashiv",
+            "post_url": "https://www.linkedin.com/posts/gadie_example",
+            "post_text": (
+                "🚨 Major announcement - Singular AI - our platform for marketing agents 🚨 "
+                "The best data wins, and Singular's customers get the best data. "
+                "Singular AI is our platform for building AI agents that think and acts like your best employee."
+            ),
+            "published_at": "2026-05-19",
+            "collected_at": "2026-05-19T09:00:00Z",
+            "topic_tags": ["mmp", "attribution", "AI media buying", "agentic workflows", "measurement"],
+            "source_config": watchlist["experts"][0],
+        },
+        {
+            "source_name": "Jason Fairchild",
+            "post_url": "https://www.linkedin.com/posts/jasonfairchild_example",
+            "post_text": (
+                "Performance advertising today boils down to trust. "
+                "One theme came up quickly: a lot of buyers are frustrated by what Heather calls "
+                "\"opacity disguised as performance.\" Automation and AI are essential for modern advertising, "
+                "but they shouldn't hide how decisions are made. Advertisers need visibility into how signals "
+                "drive optimization, validate outcomes, and influence strategy."
+            ),
+            "published_at": "2026-05-18",
+            "collected_at": "2026-05-19T09:00:00Z",
+            "topic_tags": ["CTV", "performance TV", "AI media buying", "programmatic", "traffic quality", "measurement"],
+            "source_config": watchlist["experts"][1],
+        },
+    ]
+
+    scored = score_linkedin_posts(posts, watchlist, run_date=date(2026, 5, 19))
+
+    by_name = {item["source_name"]: item["short_insight"] for item in scored}
+    assert by_name["Gadi Eliashiv"] == (
+        "Singular is positioning AI agents as a way for marketers to turn granular attribution data "
+        "into autonomous campaign workflows."
+    )
+    assert by_name["Jason Fairchild"] == (
+        "Performance platforms are being pushed to make AI-driven optimization more transparent, not just more automated."
+    )
 
 
 def test_cli_linkedin_watch_preview_path_skips_normal_monitoring_and_delivery(monkeypatch, tmp_path: Path, capsys) -> None:

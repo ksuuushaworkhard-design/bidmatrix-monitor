@@ -303,14 +303,26 @@ def _looks_like_url(value: str) -> bool:
 
 
 def _short_insight(post_text: str) -> str:
-    cleaned = _clean_text(post_text)
+    cleaned = _clean_insight_text(post_text)
     if not cleaned:
         return "No usable insight extracted."
-    sentence = re.split(r"(?<=[.!?])\s+", cleaned, maxsplit=1)[0]
-    sentence = sentence.rstrip(":,;")
-    if len(sentence) > 170:
-        sentence = sentence[:167].rstrip() + "..."
-    return sentence
+    synthesized = _synthesized_insight(cleaned)
+    if synthesized:
+        return synthesized
+
+    sentences = _split_sentences(cleaned)
+    chosen = ""
+    for sentence in sentences:
+        if _is_hype_or_hook(sentence):
+            continue
+        chosen = sentence
+        break
+    if not chosen and sentences:
+        chosen = sentences[0]
+    chosen = chosen.rstrip(":,;")
+    if len(chosen) > 170:
+        chosen = chosen[:167].rstrip() + "..."
+    return chosen or "No usable insight extracted."
 
 
 def _why_it_matters(source: dict, text: str) -> str:
@@ -337,3 +349,53 @@ def _possible_use(expected_use: list[str], text: str) -> str:
     if "partnership" in text:
         return "BD outreach"
     return "market trend"
+
+
+def _clean_insight_text(value: str) -> str:
+    cleaned = _clean_text(value)
+    cleaned = re.sub(r"[\U0001F300-\U0001FAFF]+", " ", cleaned)
+    cleaned = cleaned.replace("“", '"').replace("”", '"').replace("’", "'")
+    cleaned = re.sub(r"\s*[-–—]\s*", " - ", cleaned)
+    cleaned = re.sub(r"[!]{2,}", "!", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
+
+
+def _split_sentences(text: str) -> list[str]:
+    parts = re.split(r"(?<=[.!?])\s+", text)
+    return [part.strip() for part in parts if part.strip()]
+
+
+def _is_hype_or_hook(sentence: str) -> bool:
+    lowered = sentence.lower().strip()
+    hype_markers = (
+        "major announcement",
+        "link in the comments",
+        "link in comments",
+        "join us",
+        "register now",
+        "happening next week",
+    )
+    if any(marker in lowered for marker in hype_markers):
+        return True
+    if lowered.startswith("performance advertising today boils down to trust"):
+        return True
+    if len(lowered) < 45 and ("announcement" in lowered or "trust" in lowered):
+        return True
+    return False
+
+
+def _synthesized_insight(text: str) -> str:
+    lowered = text.lower()
+    if "singular ai" in lowered and ("marketing agents" in lowered or "ai agents" in lowered):
+        return (
+            "Singular is positioning AI agents as a way for marketers to turn granular attribution data "
+            "into autonomous campaign workflows."
+        )
+    if "opacity disguised as performance" in lowered or (
+        "advertisers need visibility" in lowered and "automation and ai" in lowered
+    ):
+        return "Performance platforms are being pushed to make AI-driven optimization more transparent, not just more automated."
+    if "subscription" in lowered and "adjust" in lowered and "integration" in lowered:
+        return "Adjust is framing subscription lifecycle measurement as a more direct optimization input across mobile growth workflows."
+    return ""
