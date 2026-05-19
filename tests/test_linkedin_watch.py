@@ -285,6 +285,48 @@ def test_short_insight_generates_clean_transparency_angle_for_jason_example() ->
     assert "boils down to trust" not in insight
 
 
+def test_short_insight_generates_incrementality_insight_for_appsflyer_ctv_example() -> None:
+    insight = _short_insight(
+        "Last - click can overstate CTV impact by 30%+. "
+        "What starts as a measurement error, ends as a budget problem. "
+        "Alexander Yip on why incrementality is the standard CTV advertisers can't afford to skip anymore."
+    )
+
+    assert insight == (
+        "AppsFlyer is highlighting how last-click attribution can overstate CTV impact, "
+        "reinforcing the need for incrementality-aware measurement."
+    )
+    assert "Last - click" not in insight
+
+
+def test_short_insight_generates_clean_pixalate_ctv_inventory_signal() -> None:
+    insight = _short_insight(
+        "Which hashtag #CTV devices are winning the global race? "
+        "For advertisers, it isn't just about who has the most screens-it's about knowing where "
+        "hashtag #programmatic budgets are actually flowing. "
+        "Our latest CTV Device Market Share Reports are live."
+    )
+
+    assert insight == "Pixalate is framing CTV device share as a programmatic quality and inventory strategy signal."
+    assert "hashtag #" not in insight
+    assert "Which " not in insight
+
+
+def test_short_insight_generates_clean_moloco_retail_media_positioning_line() -> None:
+    insight = _short_insight(
+        "[Today, our GM of Global Commerce will be speaking at RetailX's Media Awards, sharing insights "
+        "on how retailers are unlocking growth through AI-powered commerce media. "
+        "Moloco is proud to sponsor the Retail Media Technology Solution of the Year category."
+    )
+
+    assert insight == (
+        "Moloco is using retail media and AI conversations to reinforce its positioning around "
+        "performance-driven commerce advertising."
+    )
+    assert not insight.startswith("[")
+    assert not insight.startswith("Today,")
+
+
 def test_render_linkedin_watch_markdown_caps_output_at_five_items() -> None:
     posts = [
         {
@@ -393,6 +435,98 @@ def test_manual_examples_produce_clean_preview_insights() -> None:
     assert by_name["Jason Fairchild"] == (
         "Performance platforms are being pushed to make AI-driven optimization more transparent, not just more automated."
     )
+
+
+def test_manual_examples_cover_appsflyer_pixalate_and_moloco_cleanup() -> None:
+    watchlist = _watchlist()
+    watchlist["companies"].extend(
+        [
+            {
+                "name": "AppsFlyer",
+                "linkedin_url": "https://www.linkedin.com/company/appsflyer",
+                "priority": "high",
+                "topic_tags": ["ctv", "attribution", "mmp", "measurement", "incrementality"],
+                "expected_use": ["content idea", "sales talking point"],
+            },
+            {
+                "name": "Pixalate",
+                "linkedin_url": "https://www.linkedin.com/company/pixalate",
+                "priority": "high",
+                "topic_tags": ["ctv", "programmatic", "traffic quality", "measurement"],
+                "expected_use": ["market trend", "sales talking point"],
+            },
+            {
+                "name": "Moloco",
+                "linkedin_url": "https://www.linkedin.com/company/moloco",
+                "priority": "high",
+                "topic_tags": ["ai media buying", "adtech", "retail media", "programmatic"],
+                "expected_use": ["market trend", "deck/positioning angle"],
+            },
+        ]
+    )
+    watchlist["mvp_shortlist"]["daily"].extend(["AppsFlyer", "Pixalate", "Moloco"])
+    posts = [
+        {
+            "source_name": "AppsFlyer",
+            "post_url": "https://www.linkedin.com/posts/appsflyerhq_example",
+            "post_text": (
+                "Last - click can overstate CTV impact by 30%+. "
+                "What starts as a measurement error, ends as a budget problem. "
+                "Why incrementality is the standard CTV advertisers can't afford to skip anymore."
+            ),
+            "published_at": "2026-05-19",
+            "collected_at": "2026-05-19T09:00:00Z",
+            "topic_tags": ["CTV", "attribution", "MMP", "measurement", "incrementality"],
+            "source_config": watchlist["companies"][1],
+        },
+        {
+            "source_name": "Pixalate",
+            "post_url": "https://www.linkedin.com/posts/pixalate_example",
+            "post_text": (
+                "Which hashtag #CTV devices are winning the global race? "
+                "For advertisers, it isn't just about who has the most screens-it's about knowing where "
+                "hashtag #programmatic budgets are actually flowing. "
+                "Our latest CTV Device Market Share Reports are live."
+            ),
+            "published_at": "2026-05-19",
+            "collected_at": "2026-05-19T09:00:00Z",
+            "topic_tags": ["CTV", "programmatic", "traffic quality", "measurement"],
+            "source_config": watchlist["companies"][2],
+        },
+        {
+            "source_name": "Moloco",
+            "post_url": "https://www.linkedin.com/posts/moloco_example",
+            "post_text": (
+                "[Today, our GM of Global Commerce, Patrick Copeland, will be speaking at RetailX's Media Awards, "
+                "sharing insights on how retailers are unlocking growth through AI-powered commerce media. "
+                "Moloco is proud to sponsor the Retail Media Technology Solution of the Year category."
+            ),
+            "published_at": "2026-05-19",
+            "collected_at": "2026-05-19T09:00:00Z",
+            "topic_tags": ["AI media buying", "adtech", "retail media", "programmatic"],
+            "source_config": watchlist["companies"][3],
+        },
+    ]
+
+    scored = score_linkedin_posts(posts, watchlist, run_date=date(2026, 5, 19))
+    markdown = render_linkedin_watch_markdown(scored, run_date=date(2026, 5, 19))
+    by_name = {item["source_name"]: item["short_insight"] for item in scored}
+
+    assert by_name["AppsFlyer"] == (
+        "AppsFlyer is highlighting how last-click attribution can overstate CTV impact, "
+        "reinforcing the need for incrementality-aware measurement."
+    )
+    assert by_name["Pixalate"] == "Pixalate is framing CTV device share as a programmatic quality and inventory strategy signal."
+    assert by_name["Moloco"] == (
+        "Moloco is using retail media and AI conversations to reinforce its positioning around "
+        "performance-driven commerce advertising."
+    )
+    assert "hashtag #" not in markdown
+    assert "Last - click" not in markdown
+    for line in markdown.splitlines():
+        if line.startswith(tuple(f"{idx}." for idx in range(1, 6))):
+            assert not line.startswith(("1. [", "2. [", "3. [", "4. [", "5. ["))
+            assert "Today," not in line
 
 
 def test_cli_linkedin_watch_preview_path_skips_normal_monitoring_and_delivery(monkeypatch, tmp_path: Path, capsys) -> None:
