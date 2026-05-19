@@ -423,6 +423,8 @@ def _weekly_takeaway_line(text: str, weekly_items: list[dict[str, str]]) -> str:
     themes = {_weekly_takeaway_theme(item) for item in weekly_items}
     themes.discard("")
 
+    if {"supply", "subscription_measurement", "economics"} <= themes or {"supply", "measurement", "economics"} <= themes:
+        return "This week's signals point to a more performance-driven app-growth ecosystem: cleaner programmatic supply, better subscription measurement, and stronger platform economics."
     if {"web_to_app", "economics", "leadership"} <= themes:
         return "This week's signals point to a more mature app-growth ecosystem: better web-to-app journeys, stronger platform economics, and experienced leadership around performance advertising."
     if "ai" in themes and "ctv" in themes:
@@ -466,6 +468,10 @@ def _weekly_takeaway_theme(item: dict[str, str]) -> str:
     ).lower()
     if any(term in text for term in ("deep linking", "deep link", "short links", "qr codes", "web-to-app", "branded domains", "truelink")):
         return "web_to_app"
+    if any(term in text for term in ("programmatic", "inventory", "supply", "media.net", "ssp", "reliable inventory")):
+        return "supply"
+    if any(term in text for term in ("subscription", "superwall", "stripe", "lifecycle", "subscription events")):
+        return "subscription_measurement"
     if any(term in text for term in ("financial results", "revenue", "profit", "earnings", "economics", "guidance")):
         return "economics"
     if any(term in text for term in ("appointed", "board of directors", "board", "leadership", "chief executive", "ceo")):

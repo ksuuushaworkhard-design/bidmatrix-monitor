@@ -517,6 +517,48 @@ def test_weekly_takeaway_reflects_mixed_items() -> None:
     assert "more mature app-growth ecosystem: better web-to-app journeys, stronger platform economics, and experienced leadership around performance advertising." in message
 
 
+def test_weekly_takeaway_does_not_mention_ctv_or_ai_when_selected_items_are_not_related() -> None:
+    markdown = """# BidMatrix Weekly Market Brief - 2026-05-19
+
+## 1. Week In One Line
+- A focused week.
+
+## 2. What Actually Happened This Week
+- **Aceex**: Programmatic advertising company Aceex announced a collaboration with Media.net to improve access to reliable inventory and enhance programmatic execution.
+  Source: exchangewire.com (high-signal) | Date: 2026-05-14 | URL: https://example.com/aceex
+- **Adjust**: Adjust announced an integration with Superwall, allowing customers to send subscription events from iOS, Android, and Stripe directly to Adjust.
+  Source: adjust.com (high-signal) | Date: 2026-05-13 | URL: https://example.com/adjust
+- **AppLovin**: AppLovin published its first quarter 2026 financial results.
+  Source: applovin.com (high-signal) | Date: 2026-05-12 | URL: https://example.com/applovin
+
+## 3. What This Suggests
+- Adjust shows app marketers now expect CTV to behave more like performance media than pure awareness inventory.
+"""
+    message = _telegram_message("BidMatrix Weekly Market Brief - 2026-05-19", markdown, "weekly")
+    assert "Weekly takeaway:" in message
+    assert "CTV" not in message.split("Weekly takeaway:", 1)[1]
+    assert "AI" not in message.split("Weekly takeaway:", 1)[1]
+
+
+def test_weekly_takeaway_reflects_supply_measurement_and_economics_live_case() -> None:
+    markdown = """# BidMatrix Weekly Market Brief - 2026-05-19
+
+## 1. Week In One Line
+- A focused week.
+
+## 2. What Actually Happened This Week
+- **Aceex**: Programmatic advertising company Aceex announced a collaboration with Media.net to improve access to reliable inventory and enhance programmatic execution.
+  Source: exchangewire.com (high-signal) | Date: 2026-05-14 | URL: https://example.com/aceex
+- **Adjust**: Adjust announced an integration with Superwall, allowing customers to send subscription events from iOS, Android, and Stripe directly to Adjust.
+  Source: adjust.com (high-signal) | Date: 2026-05-13 | URL: https://example.com/adjust
+- **AppLovin**: AppLovin published its first quarter 2026 financial results.
+  Source: applovin.com (high-signal) | Date: 2026-05-12 | URL: https://example.com/applovin
+"""
+    message = _telegram_message("BidMatrix Weekly Market Brief - 2026-05-19", markdown, "weekly")
+    assert "Weekly takeaway:" in message
+    assert "more performance-driven app-growth ecosystem: cleaner programmatic supply, better subscription measurement, and stronger platform economics." in message
+
+
 def test_weekly_with_two_usable_items_still_sends_recap() -> None:
     markdown = """# BidMatrix Weekly Market Brief - 2026-05-15
 
