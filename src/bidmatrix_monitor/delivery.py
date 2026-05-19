@@ -145,45 +145,24 @@ def _telegram_message(subject: str, text: str, report_type: str) -> str:
 
 def _telegram_weekly_message(subject: str, text: str) -> str:
     date_label = _date_from_subject(subject)
-    sections = _weekly_sections(text)
-    week_line = _first_bullet(
-        sections.get("1. Week In One Line", []),
-        "This was a light week with a small number of useful signals.",
-    )
-    happened = sections.get("2. What Actually Happened This Week", [])[:2]
-    suggests = sections.get("3. What This Suggests", [])[:2]
-    matters = sections.get("4. Why It Matters For BidMatrix", [])[:2]
-    watch = sections.get("7. Watch Next Week", [])[:2]
-
     lines = [f"<b>BidMatrix Weekly Brief — {html.escape(date_label)}</b>"]
-
-    if "Signal volume was light this week" in text:
-        lines.extend(["", "Signal volume was light this week."])
-
-    lines.extend(["", "<b>Week in one line</b>", html.escape(_shorten(week_line, 120))])
-
-    lines.append("")
-    lines.append("<b>What happened</b>")
-    if happened:
-        for item in happened:
-            lines.append(f"- {html.escape(_shorten(_strip_markdown_emphasis(item), 130))}")
-    else:
-        lines.append("- No strong weekly developments.")
+    weekly_items = _select_telegram_weekly_items(_weekly_telegram_items(text), _subject_date(subject))
+    if len(weekly_items) < 2:
+        lines.extend(
+            [
+                "",
+                "Not enough strong weekly signals for a useful recap this week. The monitor will keep watching mobile UA, measurement, fraud, CTV, AI campaign ops, and app growth.",
+            ]
+        )
+        return _truncate("\n".join(lines), 1800)
 
     lines.append("")
-    lines.append("<b>What this suggests</b>")
-    for item in suggests or ["There was not enough evidence this week to support a broader conclusion."]:
-        lines.append(f"- {html.escape(_shorten(item, 120))}")
+    for index, item in enumerate(weekly_items[:4], start=1):
+        lines.extend(_telegram_weekly_news_item(item, index))
 
-    lines.append("")
-    lines.append("<b>Why it matters for BidMatrix</b>")
-    for item in matters or ["The best use of this week's signals is narrow positioning rather than a broad market claim."]:
-        lines.append(f"- {html.escape(_shorten(item, 120))}")
-
-    lines.append("")
-    lines.append("<b>Watch next week</b>")
-    for item in watch or ["Watch for stronger follow-up moves next week."]:
-        lines.append(f"- {html.escape(_shorten(item, 100))}")
+    takeaway = _weekly_takeaway_line(text)
+    if takeaway:
+        lines.extend(["Weekly takeaway:", html.escape(takeaway)])
 
     return _truncate("\n".join(lines), 1800)
 
@@ -305,6 +284,150 @@ def _weekly_sections(text: str) -> dict[str, list[str]]:
         if stripped.startswith("- "):
             sections[current].append(stripped[2:].strip())
     return sections
+
+
+def _weekly_telegram_items(text: str) -> list[dict[str, str]]:
+    items: list[dict[str, str]] = []
+    current: dict[str, str] | None = None
+    section = ""
+
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped == "## 2. What Actually Happened This Week":
+            section = "happened"
+            continue
+        if stripped == "## Background Watchlist":
+            section = "background"
+            continue
+        if stripped.startswith("## "):
+            section = ""
+            current = None
+            continue
+
+        if section not in {"happened", "background"}:
+            continue
+
+        if stripped.startswith("- "):
+            if "No strong fresh weekly developments were found." in stripped:
+                current = None
+                continue
+            if "No older background items were promoted to the watchlist." in stripped:
+                current = None
+                continue
+            raw_line = stripped.removeprefix("- ").strip()
+            current = {
+                "section": section,
+                "line": _clean_weekly_event_line(raw_line),
+                "url": "",
+                "source": "",
+                "date": "",
+                "company": "",
+            }
+            company_match = re.match(r"\*\*(?P<company>.+?)\*\*:\s*(?P<event>.+)$", raw_line)
+            if company_match:
+                current["company"] = _clean_markdown_text(company_match.group("company"))
+                current["line"] = _clean_weekly_event_line(company_match.group("event"))
+            items.append(current)
+            continue
+
+        if current and stripped.startswith("Source:"):
+            current["source"] = _clean_markdown_text(stripped.removeprefix("Source:").strip())
+            url_match = re.search(r"URL:\s*(https?://\S+)", stripped)
+            if url_match:
+                current["url"] = url_match.group(1).rstrip(")")
+            date_match = re.search(r"Date:\s*(\d{4}-\d{2}-\d{2})", stripped)
+            if date_match:
+                current["date"] = date_match.group(1)
+
+    return items
+
+
+def _clean_weekly_event_line(value: str) -> str:
+    line = _clean_markdown_text(value)
+    if line.lower().startswith("background context, not a new weekly signal."):
+        line = line.split(".", 1)[1].strip() if "." in line else ""
+    return _clean_trailing_fragment(_shorten(line, 180))
+
+
+def _select_telegram_weekly_items(items: list[dict[str, str]], run_date: date | None) -> list[dict[str, str]]:
+    selected: list[dict[str, str]] = []
+    seen_urls: set[str] = set()
+    seen_companies: set[str] = set()
+    seen_lines: set[str] = set()
+
+    def date_quality(item: dict[str, str]) -> tuple[int, int]:
+        value = (item.get("date") or "").strip()
+        if not value:
+            return (3, 999)
+        try:
+            published = date.fromisoformat(value)
+        except ValueError:
+            return (3, 999)
+        if published.year < 2026:
+            return (4, 999)
+        if run_date is None:
+            return (0, 0)
+        age_days = (run_date - published).days
+        if age_days < 0:
+            return (4, 999)
+        if age_days <= 7:
+            return (0, age_days)
+        if age_days <= 30:
+            return (2, age_days)
+        return (4, age_days)
+
+    ranked = sorted(
+        items,
+        key=lambda item: (
+            date_quality(item),
+            1 if item.get("section") == "background" else 0,
+            (item.get("company") or item.get("line") or "").lower(),
+        ),
+    )
+
+    for item in ranked:
+        if len(selected) >= 4:
+            break
+        url = (item.get("url") or "").strip().lower()
+        line = (item.get("line") or "").strip().lower()
+        company = (item.get("company") or "").strip().lower()
+        if not line or not url:
+            continue
+        if "bidmatrix" in " ".join([line, company, url]):
+            continue
+        if "2025-" in (item.get("date") or ""):
+            continue
+        if re.search(r"\bto enable\.|\be\.g\.|\(e\.g\.|\(\s*$", item.get("line") or "", flags=re.IGNORECASE):
+            continue
+        quality_rank, _ = date_quality(item)
+        if quality_rank >= 4:
+            continue
+        if url in seen_urls or line in seen_lines:
+            continue
+        if company and company in seen_companies:
+            continue
+        selected.append(item)
+        seen_urls.add(url)
+        seen_lines.add(line)
+        if company:
+            seen_companies.add(company)
+
+    return selected
+
+
+def _telegram_weekly_news_item(item: dict[str, str], index: int) -> list[str]:
+    return [f"{index}. {html.escape(item['line'])}", html.escape(item["url"]), ""]
+
+
+def _weekly_takeaway_line(text: str) -> str:
+    sections = _weekly_sections(text)
+    suggests = sections.get("3. What This Suggests", [])
+    if suggests:
+        return _clean_trailing_fragment(_shorten(_clean_markdown_text(suggests[0]), 160))
+    week_line = _first_bullet(sections.get("1. Week In One Line", []), "")
+    if week_line:
+        return _clean_trailing_fragment(_shorten(_clean_markdown_text(week_line), 160))
+    return ""
 
 
 def _first_bullet(values: list[str], fallback: str) -> str:

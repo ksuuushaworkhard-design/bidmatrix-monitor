@@ -353,6 +353,110 @@ def test_weekly_pr_angle_is_not_date_only_and_not_clipped() -> None:
     assert "real-time." not in markdown
 
 
+def test_weekly_telegram_uses_numbered_short_items_with_urls_and_takeaway() -> None:
+    markdown = """# BidMatrix Weekly Market Brief - 2026-05-15
+
+## 1. Week In One Line
+- Measurement, verified supply, and CTV automation moved closer to performance marketing this week.
+
+## 2. What Actually Happened This Week
+- **AppsFlyer**: AppsFlyer expanded Signal Hub with new data partners for privacy-safe audience and measurement workflows.
+  Source: appsflyer.com (high-signal) | Date: 2026-05-14 | URL: https://example.com/appsflyer
+- **Cocie AI**: Cocie AI launched CTV Autopilot for automated CTV buying and verification.
+  Source: example.com (high-signal) | Date: 2026-05-13 | URL: https://example.com/cocie
+- **Adjust**: Adjust launched a Superwall integration for subscription lifecycle measurement.
+  Source: adjust.com (high-signal) | Date: 2026-05-12 | URL: https://example.com/adjust
+
+## 3. What This Suggests
+- This week's strongest pattern: measurement, verified supply, and CTV automation are moving closer to performance marketing.
+"""
+    message = _telegram_message("BidMatrix Weekly Market Brief - 2026-05-15", markdown, "weekly")
+    assert message.startswith("<b>BidMatrix Weekly Brief — 2026-05-15</b>")
+    assert "1. AppsFlyer expanded Signal Hub with new data partners for privacy-safe audience and measurement workflows." in message
+    assert "2. Cocie AI launched CTV Autopilot for automated CTV buying and verification." in message
+    assert "3. Adjust launched a Superwall integration for subscription lifecycle measurement." in message
+    assert "https://example.com/appsflyer" in message
+    assert "https://example.com/cocie" in message
+    assert "https://example.com/adjust" in message
+    assert "Weekly takeaway:" in message
+
+
+def test_weekly_telegram_does_not_include_old_long_sections() -> None:
+    markdown = """# BidMatrix Weekly Market Brief - 2026-05-15
+
+## 1. Week In One Line
+- A focused week.
+
+## 2. What Actually Happened This Week
+- **AppsFlyer**: AppsFlyer expanded Signal Hub with new data partners.
+  Source: appsflyer.com (high-signal) | Date: 2026-05-14 | URL: https://example.com/appsflyer
+- **Cocie AI**: Cocie AI launched CTV Autopilot.
+  Source: example.com (high-signal) | Date: 2026-05-13 | URL: https://example.com/cocie
+
+## 3. What This Suggests
+- Weekly pattern.
+
+## 4. Why It Matters For BidMatrix
+- Old section.
+
+## 7. Watch Next Week
+- Old section.
+"""
+    message = _telegram_message("BidMatrix Weekly Market Brief - 2026-05-15", markdown, "weekly")
+    assert "Signal volume was light this week" not in message
+    assert "Week in one line" not in message
+    assert "What happened" not in message
+    assert "What this suggests" not in message
+    assert "Why it matters for BidMatrix" not in message
+    assert "Watch next week" not in message
+
+
+def test_weekly_telegram_fallback_is_short_and_useful() -> None:
+    markdown = """# Weekly Watchlist - limited fresh signal volume - 2026-05-15
+
+Signal volume was light this week, based on 1 curated daily report(s).
+
+## 1. Week In One Line
+- Fresh signal volume was limited this week, so this brief stays focused on the small number of developments worth tracking.
+
+## 2. What Actually Happened This Week
+- No strong fresh weekly developments were found.
+
+## Background Watchlist
+- **LoopMe**: Background context, not a new weekly signal. LoopMe launched Chartboost Direct to bring more brand demand into mobile apps.
+  Source: exchangewire.com (high-signal) | Date: 2026-04-09 | URL: https://example.com/loopme
+"""
+    message = _telegram_message("BidMatrix Weekly Market Brief - 2026-05-15", markdown, "weekly")
+    assert message == (
+        "<b>BidMatrix Weekly Brief — 2026-05-15</b>\n\n"
+        "Not enough strong weekly signals for a useful recap this week. The monitor will keep watching mobile UA, measurement, fraud, CTV, AI campaign ops, and app growth."
+    )
+
+
+def test_weekly_telegram_excludes_bidmatrix_self_and_2025_items() -> None:
+    markdown = """# BidMatrix Weekly Market Brief - 2026-05-15
+
+## 1. Week In One Line
+- A focused week.
+
+## 2. What Actually Happened This Week
+- **BidMatrix**: BidMatrix shared a 2025 expansion update.
+  Source: bidmatrix.ai (high-signal) | Date: 2025-11-20 | URL: https://example.com/bidmatrix
+- **AppsFlyer**: AppsFlyer expanded Signal Hub with new data partners.
+  Source: appsflyer.com (high-signal) | Date: 2026-05-14 | URL: https://example.com/appsflyer
+- **Adjust**: Adjust launched a Superwall integration for subscription lifecycle measurement.
+  Source: adjust.com (high-signal) | Date: 2026-05-12 | URL: https://example.com/adjust
+
+## 3. What This Suggests
+- Weekly pattern.
+"""
+    message = _telegram_message("BidMatrix Weekly Market Brief - 2026-05-15", markdown, "weekly")
+    assert "BidMatrix shared a 2025 expansion update." not in message
+    assert "https://example.com/bidmatrix" not in message
+    assert "AppsFlyer expanded Signal Hub with new data partners." in message
+    assert "Adjust launched a Superwall integration for subscription lifecycle measurement." in message
+
+
 
 def test_daily_telegram_message_uses_minimal_news_list_format() -> None:
     markdown = """# BidMatrix Daily Brief - 2026-05-05

@@ -69,11 +69,13 @@ def render_weekly_markdown(digest: dict[str, Any]) -> str:
     if digest["what_actually_happened"]:
         for item in digest["what_actually_happened"]:
             lines.extend(
-                [
-                    f"- **{item['company']}**: {item['event']}",
-                    f"  Source: {item['source']}" + (f" | Date: {item['date']}" if item["date"] else ""),
-                ]
-            )
+                    [
+                        f"- **{item['company']}**: {item['event']}",
+                        f"  Source: {item['source']}"
+                        + (f" | Date: {item['date']}" if item["date"] else "")
+                        + (f" | URL: {item['url']}" if item.get("url") else ""),
+                    ]
+                )
     else:
         lines.append("- No strong fresh weekly developments were found.")
 
@@ -84,7 +86,9 @@ def render_weekly_markdown(digest: dict[str, Any]) -> str:
                 lines.extend(
                     [
                         f"- **{item['company']}**: Background context, not a new weekly signal. {item['event']}",
-                        f"  Source: {item['source']}" + (f" | Date: {item['date']}" if item["date"] else ""),
+                        f"  Source: {item['source']}"
+                        + (f" | Date: {item['date']}" if item["date"] else "")
+                        + (f" | URL: {item['url']}" if item.get("url") else ""),
                     ]
                 )
         else:
@@ -114,6 +118,7 @@ def render_weekly_markdown(digest: dict[str, Any]) -> str:
                     f"  Event: {item['event']}",
                     f"  Source: {item['source']}",
                     f"  Date: {item['date'] or 'unknown'}",
+                    f"  URL: {item['url'] or 'unknown'}",
                 ]
             )
 
@@ -176,6 +181,7 @@ def _concrete_developments(items: list[dict[str, Any]]) -> list[dict[str, str]]:
                 "event": _event_line(item, company),
                 "source": _source_name(item),
                 "date": str(item.get("published_date") or "").strip() or None,
+                "url": str(item.get("url") or "").strip() or None,
                 "summary": _plain_sentence(item.get("what_happened") or item.get("summary") or item.get("title", ""), 190),
                 "why_now": _plain_sentence(item.get("why_now") or item.get("why_it_matters") or item.get("summary") or item.get("title", ""), 170),
                 "market_context": _plain_sentence(item.get("market_context") or item.get("why_it_matters") or item.get("summary") or item.get("title", ""), 170),
@@ -326,6 +332,7 @@ def _evidence_block(developments: list[dict[str, str]]) -> list[dict[str, str]]:
             "event": item["event"],
             "source": item["source"],
             "date": item["date"],
+            "url": item.get("url"),
         }
         for item in developments
     ]
