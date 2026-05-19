@@ -80,13 +80,22 @@ def _telegram_quality_gate_reasons(message: str) -> list[str]:
         return []
 
     reasons: list[str] = []
+    old_format_markers = (
+        "<b>Today's useful signals</b>",
+        "<b>Top market news</b>",
+        "<b>Market signal to watch</b>",
+        "<b>Market Watch</b>",
+        "<b>What happened</b>",
+        "<b>How BidMatrix can use it</b>",
+        "<b>Source</b>",
+    )
+    if any(marker in message for marker in old_format_markers):
+        reasons.append("old_format_verbose_labels")
     if "<b>What it affects</b>" in message:
         reasons.append("old_format_what_it_affects")
     if "<b>Why it matters for BidMatrix</b>" in message:
         reasons.append("old_format_why_it_matters_for_bidmatrix")
-    if len(re.findall(r"<b>How BidMatrix can use it</b>", message)) < item_count:
-        reasons.append("missing_how_bidmatrix_can_use_it")
-    if not re.search(r"https?://", message):
+    if len(re.findall(r"https?://", message)) < item_count:
         reasons.append("missing_source_url")
     if re.search(r"^\d+\.\s+.*\bbidmatrix\b", message, flags=re.IGNORECASE | re.MULTILINE):
         reasons.append("bidmatrix_self_item")
@@ -101,6 +110,8 @@ def _telegram_quality_gate_reasons(message: str) -> list[str]:
     if any(re.search(pattern, message, flags=re.IGNORECASE | re.MULTILINE) for pattern in broken_patterns):
         reasons.append("broken_fragment")
     return reasons
+
+
 def _telegram_message(subject: str, text: str, report_type: str) -> str:
     if report_type != 'daily':
         return _telegram_weekly_message(subject, text)
@@ -114,52 +125,13 @@ def _telegram_message(subject: str, text: str, report_type: str) -> str:
     items = _report_items(text)
     all_top_items = [item for item in items if item.get('section') == 'top']
     adjacent_items = [item for item in items if item.get('section') == 'adjacent']
-    intro_line = _daily_intro_line(text)
     lines = [title]
     top_items, top_stats = _filter_telegram_daily_items(all_top_items, run_date)
     adjacent, adjacent_stats = _filter_telegram_daily_items(adjacent_items, run_date)
-    digest_items, selection_meta = _select_telegram_daily_items(top_items, adjacent, target=4, limit=4)
+    digest_items, selection_meta = _select_telegram_daily_items(top_items, adjacent, target=3, limit=4)
 
     if digest_items:
-        core_count = sum(1 for item in digest_items if _telegram_item_counts_as_core(item))
-        adjacent_count = len(digest_items) - core_count
-        if _is_market_watch_intro(intro_line) or not core_count:
-            if len(digest_items) == 1 and adjacent_count == 1:
-                lines.extend(["", "<b>Market Watch</b>", "No strong fresh BidMatrix-core signals found today. One adjacent market signal is worth watching."])
-            else:
-                lines.extend(["", "<b>Market Watch</b>", "No major core BidMatrix signal dominated today, but several relevant market moves are worth tracking."])
-        else:
-            recent_context_count = (
-                selection_meta["recent_14d_count"]
-                + selection_meta["recent_30d_count"]
-                + selection_meta["unknown_trusted_count"]
-            )
-            if selection_meta.get("confidence_relaxation_used"):
-                intro = "Fresh high-confidence signals were limited, so today’s digest includes the best fresh trusted market signal available."
-            elif not selection_meta["fresh_7d_count"] and recent_context_count:
-                intro = "Fresh signals were limited, so today’s digest uses the strongest recent market context."
-            elif selection_meta["fresh_7d_count"] and recent_context_count:
-                intro = (
-                    f"Found {selection_meta['fresh_7d_count']} fresh signal{'s' if selection_meta['fresh_7d_count'] != 1 else ''}, "
-                    f"supplemented with {recent_context_count} recent market context item{'s' if recent_context_count != 1 else ''}."
-                )
-            elif core_count > 0 and adjacent_count > 0:
-                intro = (
-                    f"Found {core_count} core signal{'s' if core_count != 1 else ''}, "
-                    f"supplemented with {adjacent_count} adjacent/recent market signal{'s' if adjacent_count != 1 else ''}."
-                )
-            elif selection_meta["fresh_7d_count"] and not selection_meta["recent_14d_count"] and not selection_meta["recent_30d_count"] and not selection_meta["unknown_trusted_count"]:
-                intro = f"Found {selection_meta['fresh_7d_count']} fresh BidMatrix-relevant signal{'s' if selection_meta['fresh_7d_count'] != 1 else ''} worth attention today."
-            elif selection_meta["unknown_trusted_count"]:
-                intro = "Fresh dated signals were limited, so this digest includes trusted recent market context."
-            elif "supplemented with" in intro_line.lower():
-                intro = intro_line
-            else:
-                intro = f"Found {core_count} BidMatrix-relevant signal{'s' if core_count != 1 else ''} worth attention today."
-            lines.extend(["", "<b>Today's useful signals</b>", html.escape(_sync_intro_count(intro, len(digest_items)))])
-
-        section_label = "<b>Market signal to watch</b>" if len(digest_items) == 1 and adjacent_count == 1 else "<b>Top market news</b>"
-        lines.extend(["", section_label])
+        lines.append("")
         for index, item in enumerate(digest_items[:4], start=1):
             lines.extend(_telegram_daily_news_item(item, index))
     else:
@@ -471,19 +443,19 @@ def _source_name(item: dict[str, str]) -> str:
 
 
 def _telegram_daily_news_item(item: dict[str, str], index: int) -> list[str]:
+    sentence = _telegram_compact_daily_line(item)
     lines = [
-        f"{index}. {html.escape(_clean_trailing_fragment(_shorten(item['title'], 170)))}",
-        "<b>What happened</b>",
-        html.escape(_telegram_what_happened_line(item)),
-        "<b>How BidMatrix can use it</b>",
-        html.escape(_telegram_bidmatrix_line(item)),
-        "<b>Source</b>",
-        html.escape(_source_name(item)),
+        f"{index}. {html.escape(sentence)}",
     ]
     if item.get("url"):
         lines.append(html.escape(item["url"]))
     lines.append("")
     return lines
+
+
+def _telegram_compact_daily_line(item: dict[str, str]) -> str:
+    happened = _telegram_what_happened_line(item)
+    return _clean_trailing_fragment(_shorten(happened, 180))
 
 
 def _filter_telegram_daily_items(items: list[dict[str, str]], run_date: date | None) -> tuple[list[dict[str, str]], dict[str, int | dict[str, int]]]:
