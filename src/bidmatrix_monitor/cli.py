@@ -6,6 +6,7 @@ from pathlib import Path
 from .config import load_config
 from .delivery import maybe_deliver_report
 from .intelligence import build_report
+from .linkedin_watch import build_linkedin_watch_preview
 from .render import write_report
 from .weekly import build_weekly_digest, write_weekly_digest
 
@@ -18,7 +19,16 @@ def main() -> None:
     parser.add_argument("--days", type=int, default=7, help="Number of days to include for --weekly.")
     parser.add_argument("--diagnostics", action="store_true", help="Print curation diagnostics after a daily run.")
     parser.add_argument("--debug-exa", action="store_true", help="Print detailed Exa query timing logs.")
+    parser.add_argument(
+        "--linkedin-watch-preview",
+        help="Build a local LinkedIn Watch markdown preview from a manual input JSON file.",
+    )
     args = parser.parse_args()
+
+    if args.linkedin_watch_preview:
+        output_path = build_linkedin_watch_preview(args.linkedin_watch_preview)
+        print(f"Wrote {output_path}")
+        return
 
     config = load_config(args.config)
     if args.dry_run:
