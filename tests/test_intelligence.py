@@ -3,8 +3,8 @@ from typing import Optional, List
 
 from bidmatrix_monitor.intelligence import build_report, dedupe_items
 from bidmatrix_monitor.models import MonitorConfig, NewsItem, OutputSettings, SearchSettings, SourceConfig, Topic
-from bidmatrix_monitor.render import render_markdown, _event_line
-from bidmatrix_monitor.weekly import render_weekly_markdown
+from bidmatrix_monitor.render import render_markdown, _event_line, write_report
+from bidmatrix_monitor.weekly import build_weekly_digest, render_weekly_markdown
 from bidmatrix_monitor import delivery as delivery_module
 from bidmatrix_monitor.delivery import _send_telegram, _telegram_message, _telegram_quality_gate_reasons
 from bidmatrix_monitor.exa_client import ExaCollectionStats, ExaMonitorClient
@@ -455,6 +455,219 @@ def test_weekly_telegram_excludes_bidmatrix_self_and_2025_items() -> None:
     assert "https://example.com/bidmatrix" not in message
     assert "AppsFlyer expanded Signal Hub with new data partners." in message
     assert "Adjust launched a Superwall integration for subscription lifecycle measurement." in message
+
+
+def test_weekly_telegram_cleans_unmatched_parenthetical_fragments() -> None:
+    markdown = """# BidMatrix Weekly Market Brief - 2026-05-15
+
+## 1. Week In One Line
+- A focused week.
+
+## 2. What Actually Happened This Week
+- **AppLovin**: AppLovin reported first quarter 2026 financial results (quarter ended March 31.
+  Source: example.com (high-signal) | Date: 2026-05-14 | URL: https://example.com/applovin
+
+## 3. What This Suggests
+- Performance infrastructure remained active this week.
+"""
+    message = _telegram_message("BidMatrix Weekly Market Brief - 2026-05-15", markdown, "weekly")
+    assert "AppLovin reported first quarter 2026 financial results." in message
+    assert "(quarter ended March 31." not in message
+
+
+def test_weekly_takeaway_does_not_mention_ai_when_selected_items_are_not_ai_related() -> None:
+    markdown = """# BidMatrix Weekly Market Brief - 2026-05-15
+
+## 1. Week In One Line
+- A focused week.
+
+## 2. What Actually Happened This Week
+- **Adjust**: Adjust published a technical overview of how branded domains and its TrueLink technology support deep linking, short links, QR codes, and web-to-app journeys.
+  Source: adjust.com (high-signal) | Date: 2026-05-13 | URL: https://example.com/adjust
+- **AppLovin**: AppLovin reported first quarter 2026 financial results.
+  Source: example.com (high-signal) | Date: 2026-05-14 | URL: https://example.com/applovin
+- **Moloco**: Moloco appointed Dawn Ostroff to its Board of Directors.
+  Source: moloco.com (high-signal) | Date: 2026-05-12 | URL: https://example.com/moloco
+
+## 3. What This Suggests
+- This fits the broader move from AI as a creative novelty to AI as a performance and workflow layer inside user acquisition.
+"""
+    message = _telegram_message("BidMatrix Weekly Market Brief - 2026-05-15", markdown, "weekly")
+    assert "Weekly takeaway:" in message
+    assert "AI as a creative novelty" not in message
+    assert "better web-to-app journeys, stronger platform economics, and experienced leadership around performance advertising." in message
+
+
+def test_weekly_takeaway_reflects_mixed_items() -> None:
+    markdown = """# BidMatrix Weekly Market Brief - 2026-05-15
+
+## 1. Week In One Line
+- A focused week.
+
+## 2. What Actually Happened This Week
+- **Adjust**: Adjust published a technical overview of how branded domains and its TrueLink technology support deep linking, short links, QR codes, and web-to-app journeys.
+  Source: adjust.com (high-signal) | Date: 2026-05-13 | URL: https://example.com/adjust
+- **AppLovin**: AppLovin reported first quarter 2026 financial results.
+  Source: example.com (high-signal) | Date: 2026-05-14 | URL: https://example.com/applovin
+- **Moloco**: Moloco appointed Dawn Ostroff to its Board of Directors.
+  Source: moloco.com (high-signal) | Date: 2026-05-12 | URL: https://example.com/moloco
+    """
+    message = _telegram_message("BidMatrix Weekly Market Brief - 2026-05-15", markdown, "weekly")
+    assert "Weekly takeaway:" in message
+    assert "more mature app-growth ecosystem: better web-to-app journeys, stronger platform economics, and experienced leadership around performance advertising." in message
+
+
+def test_weekly_with_two_usable_items_still_sends_recap() -> None:
+    markdown = """# BidMatrix Weekly Market Brief - 2026-05-15
+
+## 1. Week In One Line
+- A focused week.
+
+## 2. What Actually Happened This Week
+- **AppsFlyer**: AppsFlyer expanded Signal Hub with new data partners.
+  Source: appsflyer.com (high-signal) | Date: 2026-05-14 | URL: https://example.com/appsflyer
+- **Adjust**: Adjust launched a Superwall integration for subscription lifecycle measurement.
+  Source: adjust.com (high-signal) | Date: 2026-05-12 | URL: https://example.com/adjust
+
+## 3. What This Suggests
+- Measurement partnerships and lifecycle instrumentation stayed active this week.
+"""
+    message = _telegram_message("BidMatrix Weekly Market Brief - 2026-05-15", markdown, "weekly")
+    assert "Not enough strong weekly signals" not in message
+    assert "1. AppsFlyer expanded Signal Hub with new data partners." in message
+    assert "2. Adjust launched a Superwall integration for subscription lifecycle measurement." in message
+    assert "Weekly takeaway:" in message
+
+
+def test_weekly_with_one_usable_item_still_sends_recap() -> None:
+    markdown = """# BidMatrix Weekly Market Brief - 2026-05-15
+
+## 1. Week In One Line
+- A focused week.
+
+## 2. What Actually Happened This Week
+- **AppsFlyer**: AppsFlyer expanded Signal Hub with new data partners.
+  Source: appsflyer.com (high-signal) | Date: 2026-05-14 | URL: https://example.com/appsflyer
+
+## 3. What This Suggests
+- Measurement partnerships stayed active this week.
+"""
+    message = _telegram_message("BidMatrix Weekly Market Brief - 2026-05-15", markdown, "weekly")
+    assert "Not enough strong weekly signals" not in message
+    assert "1. AppsFlyer expanded Signal Hub with new data partners." in message
+    assert "Weekly takeaway:" in message
+
+
+def test_weekly_with_zero_usable_items_sends_short_fallback() -> None:
+    markdown = """# BidMatrix Weekly Market Brief - 2026-05-15
+
+## 1. Week In One Line
+- A focused week.
+
+## 2. What Actually Happened This Week
+- **BidMatrix**: BidMatrix shared a 2025 expansion update.
+  Source: bidmatrix.ai (high-signal) | Date: 2025-11-20 | URL: https://example.com/bidmatrix
+"""
+    message = _telegram_message("BidMatrix Weekly Market Brief - 2026-05-15", markdown, "weekly")
+    assert "Not enough strong weekly signals for a useful recap this week." in message
+
+
+def test_weekly_digest_uses_14d_fallback_when_7d_is_thin(tmp_path) -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="balanced"),
+        topics=(Topic(id="mw", label="Market Watch", query="market watch"),),
+        sources=SourceConfig(high_signal_domains=("example.com",), fresh_priority_domains=("example.com",)),
+    )
+    items = [
+        NewsItem(
+            topic_id="mw",
+            topic_label="Market Watch",
+            title="Fresh AppsFlyer fraud report",
+            url="https://example.com/fresh-fraud",
+            published_date=(date.today() - timedelta(days=2)).isoformat(),
+            summary="AppsFlyer released a fraud report covering channel quality and verified traffic.",
+            why_it_matters="Fresh fraud signal.",
+            mentioned_companies=["AppsFlyer"],
+            confidence="high",
+            relevance_score=5,
+        ),
+        NewsItem(
+            topic_id="mw",
+            topic_label="Market Watch",
+            title="Adjust subscription lifecycle integration",
+            url="https://example.com/adjust",
+            published_date=(date.today() - timedelta(days=10)).isoformat(),
+            summary="Adjust launched a Superwall integration for subscription lifecycle measurement.",
+            why_it_matters="Recent measurement signal.",
+            mentioned_companies=["Adjust"],
+            confidence="high",
+            relevance_score=5,
+        ),
+        NewsItem(
+            topic_id="mw",
+            topic_label="Market Watch",
+            title="Cocie AI CTV Autopilot",
+            url="https://example.com/cocie",
+            published_date=(date.today() - timedelta(days=13)).isoformat(),
+            summary="Cocie AI launched CTV Autopilot for automated CTV buying and verification.",
+            why_it_matters="Recent CTV signal.",
+            mentioned_companies=["Cocie AI"],
+            confidence="high",
+            relevance_score=5,
+        ),
+    ]
+    report = build_report(items, config)
+    write_report(report, tmp_path)
+    digest = build_weekly_digest(tmp_path, days=7)
+    assert digest["diagnostics"]["weekly_fallback_level_used"] in {"weekly_7d", "weekly_14d"}
+    assert digest["diagnostics"]["weekly_recent_14d_count"] >= 1
+    assert len(digest["what_actually_happened"]) >= 2
+
+
+def test_weekly_digest_uses_30d_fallback_when_14d_is_thin(tmp_path) -> None:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(),
+        outputs=OutputSettings(min_relevance_score=5, sensitivity="balanced"),
+        topics=(Topic(id="mw", label="Market Watch", query="market watch"),),
+        sources=SourceConfig(high_signal_domains=("example.com",), fresh_priority_domains=("example.com",)),
+    )
+    items = [
+        NewsItem(
+            topic_id="mw",
+            topic_label="Market Watch",
+            title="Unity x Index Exchange",
+            url="https://example.com/unity",
+            published_date=(date.today() - timedelta(days=20)).isoformat(),
+            summary="Unity and Index Exchange opened gaming audience data to curated deals across web and CTV.",
+            why_it_matters="Recent 30d context.",
+            mentioned_companies=["Unity", "Index Exchange"],
+            confidence="high",
+            relevance_score=5,
+        ),
+        NewsItem(
+            topic_id="mw",
+            topic_label="Market Watch",
+            title="LoopMe direct demand",
+            url="https://example.com/loopme",
+            published_date=(date.today() - timedelta(days=24)).isoformat(),
+            summary="LoopMe launched Chartboost Direct to create more direct brand-demand paths into app inventory.",
+            why_it_matters="Recent 30d context.",
+            mentioned_companies=["LoopMe"],
+            confidence="high",
+            relevance_score=5,
+        ),
+    ]
+    report = build_report(items, config)
+    write_report(report, tmp_path)
+    digest = build_weekly_digest(tmp_path, days=7)
+    assert digest["diagnostics"]["weekly_recent_30d_count"] >= 1
+    assert digest["diagnostics"]["weekly_fallback_level_used"] == "weekly_30d"
+    assert len(digest["what_actually_happened"]) >= 1
 
 
 

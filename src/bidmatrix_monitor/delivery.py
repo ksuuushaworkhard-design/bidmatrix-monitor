@@ -147,7 +147,7 @@ def _telegram_weekly_message(subject: str, text: str) -> str:
     date_label = _date_from_subject(subject)
     lines = [f"<b>BidMatrix Weekly Brief — {html.escape(date_label)}</b>"]
     weekly_items = _select_telegram_weekly_items(_weekly_telegram_items(text), _subject_date(subject))
-    if len(weekly_items) < 2:
+    if not weekly_items:
         lines.extend(
             [
                 "",
@@ -160,7 +160,7 @@ def _telegram_weekly_message(subject: str, text: str) -> str:
     for index, item in enumerate(weekly_items[:4], start=1):
         lines.extend(_telegram_weekly_news_item(item, index))
 
-    takeaway = _weekly_takeaway_line(text)
+    takeaway = _weekly_takeaway_line(text, weekly_items)
     if takeaway:
         lines.extend(["Weekly takeaway:", html.escape(takeaway)])
 
@@ -419,14 +419,65 @@ def _telegram_weekly_news_item(item: dict[str, str], index: int) -> list[str]:
     return [f"{index}. {html.escape(item['line'])}", html.escape(item["url"]), ""]
 
 
-def _weekly_takeaway_line(text: str) -> str:
+def _weekly_takeaway_line(text: str, weekly_items: list[dict[str, str]]) -> str:
+    themes = {_weekly_takeaway_theme(item) for item in weekly_items}
+    themes.discard("")
+
+    if {"web_to_app", "economics", "leadership"} <= themes:
+        return "This week's signals point to a more mature app-growth ecosystem: better web-to-app journeys, stronger platform economics, and experienced leadership around performance advertising."
+    if "ai" in themes and "ctv" in themes:
+        return "This week's strongest pattern: AI workflows and CTV execution are moving closer to measurable performance marketing."
+    if "measurement" in themes and "fraud" in themes:
+        return "This week's strongest pattern: measurement and traffic-quality signals continue to converge around cleaner, more accountable growth."
+    if "measurement" in themes and "ctv" in themes:
+        return "This week's strongest pattern: measurement, verified supply, and CTV automation are moving closer to performance marketing."
+    if "web_to_app" in themes and "measurement" in themes:
+        return "This week's signals show more pressure on marketers to connect web-to-app journeys with cleaner measurement and conversion accountability."
+    if "economics" in themes and "leadership" in themes:
+        return "This week's signals point to a market that is getting more disciplined: stronger platform economics and experienced leadership remain central to ad-growth execution."
+
     sections = _weekly_sections(text)
     suggests = sections.get("3. What This Suggests", [])
     if suggests:
-        return _clean_trailing_fragment(_shorten(_clean_markdown_text(suggests[0]), 160))
+        candidate = _clean_markdown_text(suggests[0])
+        if "ai" not in " ".join(item.get("line", "").lower() for item in weekly_items) and re.search(r"\bai\b", candidate, flags=re.IGNORECASE):
+            candidate = ""
+        if candidate:
+            return _clean_trailing_fragment(_shorten(candidate, 160))
     week_line = _first_bullet(sections.get("1. Week In One Line", []), "")
     if week_line:
-        return _clean_trailing_fragment(_shorten(_clean_markdown_text(week_line), 160))
+        candidate = _clean_markdown_text(week_line)
+        if "ai" not in " ".join(item.get("line", "").lower() for item in weekly_items) and re.search(r"\bai\b", candidate, flags=re.IGNORECASE):
+            candidate = ""
+        if candidate:
+            return _clean_trailing_fragment(_shorten(candidate, 160))
+    if weekly_items:
+        return "This week's signals point to continued movement across measurement, platform execution, and app-growth infrastructure."
+    return ""
+
+
+def _weekly_takeaway_theme(item: dict[str, str]) -> str:
+    text = " ".join(
+        [
+            item.get("line", ""),
+            item.get("source", ""),
+            item.get("company", ""),
+        ]
+    ).lower()
+    if any(term in text for term in ("deep linking", "deep link", "short links", "qr codes", "web-to-app", "branded domains", "truelink")):
+        return "web_to_app"
+    if any(term in text for term in ("financial results", "revenue", "profit", "earnings", "economics", "guidance")):
+        return "economics"
+    if any(term in text for term in ("appointed", "board of directors", "board", "leadership", "chief executive", "ceo")):
+        return "leadership"
+    if any(term in text for term in ("ctv", "streaming", "tv", "video inventory")):
+        return "ctv"
+    if any(term in text for term in ("measurement", "attribution", "signal hub", "privacy sandbox", "mmp")):
+        return "measurement"
+    if any(term in text for term in ("fraud", "ivt", "traffic quality", "verified traffic")):
+        return "fraud"
+    if any(term in text for term in ("ai", "agentic", "automation", "autopilot")):
+        return "ai"
     return ""
 
 
@@ -1038,6 +1089,9 @@ def _clean_trailing_fragment(text: str) -> str:
             cleaned = cleaned[: -len(phrase)].rstrip(' ,;:.!?-')
             removed_fragment = True
             break
+    if cleaned.count('(') > cleaned.count(')') and '(' in cleaned:
+        cleaned = cleaned.rsplit('(', 1)[0].rstrip(' ,;:.!?-')
+        removed_fragment = True
     if not cleaned:
         return ''
     if terminal and not removed_fragment:

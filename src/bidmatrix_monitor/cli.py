@@ -7,7 +7,7 @@ from .config import load_config
 from .delivery import maybe_deliver_report
 from .intelligence import build_report
 from .render import write_report
-from .weekly import write_weekly_digest
+from .weekly import build_weekly_digest, write_weekly_digest
 
 
 def main() -> None:
@@ -26,15 +26,33 @@ def main() -> None:
         return
 
     if args.weekly:
-        markdown_path, json_path = write_weekly_digest(Path(config.outputs.report_dir), days=args.days)
+        report_dir = Path(config.outputs.report_dir)
+        weekly_digest = build_weekly_digest(report_dir, days=args.days)
+        if int(weekly_digest.get("diagnostics", {}).get("weekly_selected_items_count", 0)) == 0:
+            report, _client = _build_daily_report(config, debug_exa=args.debug_exa)
+            write_report(report, report_dir)
+        markdown_path, json_path = write_weekly_digest(report_dir, days=args.days)
         print(f"Wrote {markdown_path}")
         print(f"Wrote {json_path}")
         maybe_deliver_report(config, markdown_path, "weekly")
         return
 
+    report, client = _build_daily_report(config, debug_exa=args.debug_exa)
+    markdown_path, json_path, curated_json_path = write_report(report, Path(config.outputs.report_dir))
+    print(f"Wrote {markdown_path}")
+    print(f"Wrote {json_path}")
+    print(f"Wrote {curated_json_path}")
+    client.print_collection_summary()
+    _print_pipeline_state(report.diagnostics)
+    if args.diagnostics:
+        _print_diagnostics(report.diagnostics)
+    maybe_deliver_report(config, markdown_path, "daily")
+
+
+def _build_daily_report(config, debug_exa: bool = False):
     from .exa_client import ExaMonitorClient
 
-    client = ExaMonitorClient(config, debug_exa=args.debug_exa)
+    client = ExaMonitorClient(config, debug_exa=debug_exa)
     items = []
     exa_errors: list[str] = []
     for topic in config.topics:
@@ -63,15 +81,7 @@ def main() -> None:
         report = build_report(items, config, exa_errors=exa_errors, exa_meta=client.collection_stats())
 
     report.diagnostics.update(client.collection_stats())
-    markdown_path, json_path, curated_json_path = write_report(report, Path(config.outputs.report_dir))
-    print(f"Wrote {markdown_path}")
-    print(f"Wrote {json_path}")
-    print(f"Wrote {curated_json_path}")
-    client.print_collection_summary()
-    _print_pipeline_state(report.diagnostics)
-    if args.diagnostics:
-        _print_diagnostics(report.diagnostics)
-    maybe_deliver_report(config, markdown_path, "daily")
+    return report, client
 
 
 def _print_diagnostics(diagnostics: dict) -> None:

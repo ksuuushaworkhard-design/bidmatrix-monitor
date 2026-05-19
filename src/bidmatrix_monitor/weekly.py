@@ -24,20 +24,18 @@ def write_weekly_digest(report_dir: str | Path, days: int = 7) -> tuple[Path, Pa
 def build_weekly_digest(report_dir: Path, days: int = 7) -> dict[str, Any]:
     reports = _load_recent_curated_reports(report_dir, days)
     items = _dedupe_items(_collect_items(reports))
-    cutoff = date.today() - timedelta(days=days - 1)
-    fresh_items = [item for item in items if _item_date(item) and _item_date(item) >= cutoff]
-    background_items = [item for item in items if not _item_date(item) or _item_date(item) < cutoff]
-    low_volume = len(fresh_items) < 2
-    development_limit = 2 if low_volume else 3
-    developments = _concrete_developments(fresh_items[:development_limit])
-    background_watchlist = _concrete_developments(background_items[:2])
+    selected_items, weekly_diagnostics = _select_weekly_items(items, date.today())
+    low_volume = len(selected_items) < 2
+    developments = _concrete_developments(selected_items[:5])
+    background_candidates = [item for item in items if str(item.get("url") or "").strip() not in {str(v.get("url") or "").strip() for v in selected_items}]
+    background_watchlist = _concrete_developments(background_candidates[:2]) if low_volume else []
 
     return {
         "run_date": date.today().isoformat(),
         "window_days": days,
         "source_reports": [report["path"] for report in reports],
         "report_count": len(reports),
-        "item_count": len(fresh_items),
+        "item_count": len(selected_items),
         "limited_signal_volume": low_volume,
         "week_in_one_line": _week_in_one_line(developments, low_volume),
         "what_actually_happened": developments,
@@ -48,6 +46,12 @@ def build_weekly_digest(report_dir: Path, days: int = 7) -> dict[str, Any]:
         "best_pr_positioning_angles": _best_pr_positioning_angles(developments, reports),
         "watch_next_week": _watch_next_week(developments),
         "evidence": _evidence_block(developments),
+        "diagnostics": {
+            "raw_results_count": len(items),
+            "parsed_signals_count": len(items),
+            "weekly_candidates_count": len(items),
+            **weekly_diagnostics,
+        },
     }
 
 
@@ -154,9 +158,242 @@ def _date_from_daily_filename(path: Path) -> date | None:
 def _collect_items(reports: list[dict[str, Any]]) -> list[dict[str, Any]]:
     items = []
     for report in reports:
-        for key in ("top_news", "partner_signals", "competitor_moves", "background_items"):
+        for key in (
+            "daily_digest_items",
+            "daily_signals",
+            "top_news",
+            "partner_signals",
+            "competitor_moves",
+            "background_items",
+            "adjacent_watchlist",
+            "fresh_weak_confidence",
+        ):
             items.extend(report.get(key, []))
     return items
+
+
+def _select_weekly_items(items: list[dict[str, Any]], run_date: date) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    prepared: list[dict[str, Any]] = []
+    rejected: list[dict[str, str]] = []
+
+    for item in items:
+        reason = _weekly_rejection_reason(item, run_date)
+        if reason:
+            rejected.append(
+                {
+                    "title": str(item.get("title", "")).strip(),
+                    "source": _source_name(item),
+                    "date": str(item.get("published_date") or "unknown"),
+                    "confidence": str(item.get("confidence") or "unknown"),
+                    "bucket": _weekly_bucket(item),
+                    "rejection_reason": reason,
+                }
+            )
+            continue
+        enriched = dict(item)
+        quality, age_days = _weekly_date_quality(item, run_date)
+        enriched["_weekly_date_quality"] = quality
+        enriched["_weekly_age_days"] = age_days
+        prepared.append(enriched)
+
+    selected: list[dict[str, Any]] = []
+    seen_urls: set[str] = set()
+    seen_companies: set[str] = set()
+    seen_buckets: set[str] = set()
+
+    def add_candidates(candidates: list[dict[str, Any]], *, allowed: set[str], unique_bucket: bool) -> None:
+        for item in candidates:
+            if len(selected) >= 5:
+                return
+            if item.get("_weekly_date_quality") not in allowed:
+                continue
+            url = str(item.get("url") or "").strip().lower()
+            company = _primary_company(item).strip().lower()
+            bucket = _weekly_bucket(item)
+            if url and url in seen_urls:
+                continue
+            if company and company in seen_companies:
+                continue
+            if unique_bucket and bucket in seen_buckets:
+                continue
+            selected.append(item)
+            if url:
+                seen_urls.add(url)
+            if company:
+                seen_companies.add(company)
+            if bucket:
+                seen_buckets.add(bucket)
+
+    ranked = sorted(
+        [item for item in prepared if str(item.get("confidence") or "medium").lower() in {"high", "medium"}],
+        key=lambda item: (
+            _weekly_priority(item),
+            str(item.get("title", "")).lower(),
+        ),
+        reverse=True,
+    )
+    low_confidence_ranked = sorted(
+        [item for item in prepared if str(item.get("confidence") or "").lower() == "low"],
+        key=lambda item: (
+            _weekly_priority(item),
+            str(item.get("title", "")).lower(),
+        ),
+        reverse=True,
+    )
+
+    for allowed in ({"fresh_7d"}, {"recent_14d"}, {"recent_30d"}):
+        add_candidates(ranked, allowed=allowed, unique_bucket=True)
+    if len(selected) < 3:
+        for allowed in ({"fresh_7d"}, {"recent_14d"}, {"recent_30d"}):
+            add_candidates(ranked, allowed=allowed, unique_bucket=False)
+
+    confidence_relaxation_used = False
+    if not selected:
+        add_candidates(low_confidence_ranked, allowed={"fresh_7d"}, unique_bucket=True)
+        if len(selected) < 2:
+            add_candidates(low_confidence_ranked, allowed={"fresh_7d"}, unique_bucket=False)
+        confidence_relaxation_used = bool(selected)
+
+    fresh_7d_count = sum(1 for item in selected if item.get("_weekly_date_quality") == "fresh_7d")
+    recent_14d_count = sum(1 for item in selected if item.get("_weekly_date_quality") == "recent_14d")
+    recent_30d_count = sum(1 for item in selected if item.get("_weekly_date_quality") == "recent_30d")
+
+    if fresh_7d_count:
+        fallback_level = "weekly_7d"
+    elif recent_14d_count:
+        fallback_level = "weekly_14d"
+    elif recent_30d_count:
+        fallback_level = "weekly_30d"
+    elif confidence_relaxation_used:
+        fallback_level = "weekly_low_confidence_fresh"
+    else:
+        fallback_level = "weekly_empty"
+
+    return selected, {
+        "weekly_fresh_7d_count": fresh_7d_count,
+        "weekly_recent_14d_count": recent_14d_count,
+        "weekly_recent_30d_count": recent_30d_count,
+        "weekly_selected_items_count": len(selected),
+        "weekly_rejected_count": len(rejected),
+        "weekly_fallback_level_used": fallback_level,
+        "weekly_confidence_relaxation_used": confidence_relaxation_used,
+        "weekly_rejections": rejected[:10],
+    }
+
+
+def _weekly_priority(item: dict[str, Any]) -> tuple[int, int, int]:
+    quality = str(item.get("_weekly_date_quality") or "")
+    quality_rank = {"fresh_7d": 4, "recent_14d": 3, "recent_30d": 2}.get(quality, 0)
+    confidence_rank = {"high": 3, "medium": 2, "low": 1}.get(str(item.get("confidence") or "medium").lower(), 0)
+    bucket_rank = {
+        "measurement": 7,
+        "fraud": 6,
+        "ctv": 5,
+        "programmatic": 4,
+        "ai_ops": 3,
+        "app_growth": 2,
+        "partners": 1,
+    }.get(_weekly_bucket(item), 0)
+    return (quality_rank, confidence_rank, bucket_rank)
+
+
+def _weekly_date_quality(item: dict[str, Any], run_date: date) -> tuple[str, int | None]:
+    published = _item_date(item)
+    if published is None:
+        return ("unknown", None)
+    if published.year < 2026:
+        return ("old_2025_or_earlier", None)
+    age_days = (run_date - published).days
+    if age_days < 0:
+        return ("future_invalid", age_days)
+    if age_days <= 7:
+        return ("fresh_7d", age_days)
+    if age_days <= 14:
+        return ("recent_14d", age_days)
+    if age_days <= 30:
+        return ("recent_30d", age_days)
+    return ("older_than_30d", age_days)
+
+
+def _weekly_rejection_reason(item: dict[str, Any], run_date: date) -> str | None:
+    text = " ".join(
+        [
+            str(item.get("title") or ""),
+            str(item.get("summary") or ""),
+            str(item.get("what_happened") or ""),
+            str(item.get("url") or ""),
+        ]
+    ).lower()
+    if "bidmatrix" in text:
+        return "self_item"
+    quality, _ = _weekly_date_quality(item, run_date)
+    if quality == "old_2025_or_earlier":
+        return "old_2025_item"
+    if quality == "future_invalid":
+        return "future_date"
+    if quality == "older_than_30d":
+        return "older_than_30d"
+    if quality == "unknown":
+        return "unknown_date"
+    if re.search(r"\bto enable\.|\be\.g\.|\(e\.g\.|\(\s*$", text, flags=re.IGNORECASE):
+        return "broken_fragment"
+    if _weekly_is_generic_low_quality(item):
+        return "generic_low_quality"
+    confidence = str(item.get("confidence") or "medium").lower()
+    if confidence == "low" and not _weekly_low_confidence_allowed(item, run_date):
+        return "low_confidence"
+    return None
+
+
+def _weekly_low_confidence_allowed(item: dict[str, Any], run_date: date) -> bool:
+    quality, _ = _weekly_date_quality(item, run_date)
+    if quality != "fresh_7d":
+        return False
+    if "(high-signal)" not in _source_name(item).lower():
+        return False
+    if _weekly_bucket(item) == "other":
+        return False
+    if _weekly_is_generic_low_quality(item):
+        return False
+    return True
+
+
+def _weekly_is_generic_low_quality(item: dict[str, Any]) -> bool:
+    text = " ".join(
+        [
+            str(item.get("title") or ""),
+            str(item.get("summary") or ""),
+            str(item.get("what_happened") or ""),
+        ]
+    ).lower()
+    return any(phrase in text for phrase in ("product news", "latest features", "front page", "roundup of product updates"))
+
+
+def _weekly_bucket(item: dict[str, Any]) -> str:
+    text = " ".join(
+        [
+            str(item.get("title") or ""),
+            str(item.get("summary") or ""),
+            str(item.get("what_happened") or ""),
+            " ".join(str(v) for v in item.get("hot_topics", []) or []),
+            str(item.get("signal_type") or ""),
+        ]
+    ).lower()
+    if any(term in text for term in ("mmp", "attribution", "measurement", "skan", "privacy sandbox", "signal hub")):
+        return "measurement"
+    if any(term in text for term in ("fraud", "ivt", "traffic quality", "verified traffic")):
+        return "fraud"
+    if any(term in text for term in ("ctv", "streaming", "total tv", "pause ad")):
+        return "ctv"
+    if any(term in text for term in ("dsp", "ssp", "programmatic", "inventory", "supply", "marketplace")):
+        return "programmatic"
+    if any(term in text for term in ("agentic", "ai", "automation", "autopilot", "campaign ops")):
+        return "ai_ops"
+    if any(term in text for term in ("app growth", "user acquisition", "subscription", "paywall", "mobile growth")):
+        return "app_growth"
+    if any(term in text for term in ("partner", "integration", "certified")):
+        return "partners"
+    return "other"
 
 
 def _dedupe_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
