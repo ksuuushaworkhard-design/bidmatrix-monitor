@@ -1,0 +1,50 @@
+{
+  "sample_note": "Demo LinkedIn post URLs below are placeholders for local MVP preview only and are not verified real permalinks.",
+  "posts": [
+    {
+      "source_name": "Adjust",
+      "source_url": "",
+      "post_url": "https://www.linkedin.com/posts/adjustcom_adjust-superwall-subscription-measurement-activity-7321000000000000001-AAAA",
+      "post_text": "Adjust announced a Superwall integration that sends subscription lifecycle events from iOS, Android, and Stripe into Adjust for cleaner measurement and optimization.",
+      "published_at": "2026-05-19",
+      "collected_at": "2026-05-19T09:00:00Z",
+      "topic_tags": ["mmp", "attribution", "subscriptions", "measurement", "mobile ua"]
+    },
+    {
+      "source_name": "Fraudlogix",
+      "source_url": "",
+      "post_url": "https://www.linkedin.com/posts/fraudlogix_fraudlogix-traffic-quality-activity-7321000000000000002-BBBB",
+      "post_text": "Fraudlogix shared a new breakdown of invalid traffic patterns across mobile acquisition, with practical guidance on cleaner traffic and verification checkpoints.",
+      "published_at": "2026-05-18",
+      "collected_at": "2026-05-19T09:10:00Z",
+      "topic_tags": ["fraud", "traffic quality", "ivt", "mobile growth"]
+    },
+    {
+      "source_name": "Jason Fairchild",
+      "source_url": "",
+      "post_url": "https://www.linkedin.com/posts/jasonfairchild_ctv-performance-appgrowth-activity-7321000000000000003-CCCC",
+      "post_text": "Jason Fairchild argued that app marketers are starting to expect CTV inventory to behave like measurable performance media instead of pure awareness spend.",
+      "published_at": "2026-05-17",
+      "collected_at": "2026-05-19T09:15:00Z",
+      "topic_tags": ["ctv", "performance tv", "app growth", "attribution"]
+    },
+    {
+      "source_name": "Gadi Eliashiv",
+      "source_url": "",
+      "post_url": "https://www.linkedin.com/posts/gadie_measurement-incrementality-activity-7321000000000000004-DDDD",
+      "post_text": "Gadi Eliashiv posted that incrementality measurement is becoming a board-level budgeting question, not just an analyst workflow, as app teams push for cleaner ROI proof.",
+      "published_at": "2026-05-16",
+      "collected_at": "2026-05-19T09:20:00Z",
+      "topic_tags": ["measurement", "incrementality", "analytics", "mobile growth"]
+    },
+    {
+      "source_name": "Mobile Dev Memo",
+      "source_url": "",
+      "post_url": "https://www.linkedin.com/posts/mobile-dev-memo_privacy-sandbox-mobile-activity-7321000000000000005-EEEE",
+      "post_text": "Mobile Dev Memo highlighted how Privacy Sandbox changes are reshaping mobile growth planning, especially for attribution windows, signal loss, and budget calibration.",
+      "published_at": "2026-05-15",
+      "collected_at": "2026-05-19T09:25:00Z",
+      "topic_tags": ["privacy sandbox", "attribution", "market trend", "user acquisition"]
+    }
+  ]
+}
