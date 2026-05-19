@@ -355,9 +355,14 @@ def _clean_insight_text(value: str) -> str:
     cleaned = _clean_text(value)
     cleaned = re.sub(r"[\U0001F300-\U0001FAFF]+", " ", cleaned)
     cleaned = cleaned.replace("“", '"').replace("”", '"').replace("’", "'")
+    cleaned = re.sub(r"\bhashtag\s+#", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"(?<=\w)\s+-\s+(?=\w)", "-", cleaned)
     cleaned = re.sub(r"\s*[-–—]\s*", " - ", cleaned)
+    cleaned = re.sub(r"\[\s*", "", cleaned)
+    cleaned = cleaned.replace("→", " ")
     cleaned = re.sub(r"[!]{2,}", "!", cleaned)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    cleaned = re.sub(r"^(Today,\s*)", "", cleaned, flags=re.IGNORECASE)
     return cleaned
 
 
@@ -378,6 +383,10 @@ def _is_hype_or_hook(sentence: str) -> bool:
     )
     if any(marker in lowered for marker in hype_markers):
         return True
+    if lowered.startswith("which ") and lowered.endswith("?"):
+        return True
+    if lowered.startswith("today,"):
+        return True
     if lowered.startswith("performance advertising today boils down to trust"):
         return True
     if len(lowered) < 45 and ("announcement" in lowered or "trust" in lowered):
@@ -391,6 +400,22 @@ def _synthesized_insight(text: str) -> str:
         return (
             "Singular is positioning AI agents as a way for marketers to turn granular attribution data "
             "into autonomous campaign workflows."
+        )
+    if "last-click can overstate ctv impact" in lowered or ("incrementality" in lowered and "ctv" in lowered and "budget problem" in lowered):
+        return (
+            "AppsFlyer is highlighting how last-click attribution can overstate CTV impact, "
+            "reinforcing the need for incrementality-aware measurement."
+        )
+    if "ctv device market share reports" in lowered or (
+        "roku" in lowered and "samsung" in lowered and "programmatic budgets" in lowered
+    ):
+        return "Pixalate is framing CTV device share as a programmatic quality and inventory strategy signal."
+    if "retail media technology solution of the year" in lowered or (
+        "ai-powered commerce media" in lowered and "retail media" in lowered
+    ):
+        return (
+            "Moloco is using retail media and AI conversations to reinforce its positioning around "
+            "performance-driven commerce advertising."
         )
     if "opacity disguised as performance" in lowered or (
         "advertisers need visibility" in lowered and "automation and ai" in lowered
