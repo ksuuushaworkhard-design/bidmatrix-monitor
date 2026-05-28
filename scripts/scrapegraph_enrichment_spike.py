@@ -98,30 +98,24 @@ def run_spike(urls: list[dict[str, str]]) -> list[EnrichmentResult]:
         ]
 
     try:
-        from scrapegraph_py import SyncClient  # type: ignore
+        import requests
     except Exception as exc:
         return [
             EnrichmentResult(
                 label=item["label"],
                 source_url=item["url"],
                 status="error",
-                error=f"scrapegraph_py is not available: {exc}",
+                error=f"requests is not available: {exc}",
             )
             for item in urls
         ]
 
-    try:
-        client = SyncClient(api_key=api_key, timeout=30)
-    except Exception as exc:
-        return [
-            EnrichmentResult(
-                label=item["label"],
-                source_url=item["url"],
-                status="error",
-                error=f"ScrapeGraphAI client initialization failed: {exc}",
-            )
-            for item in urls
-        ]
+    base_url = os.getenv("SGAI_API_BASE_URL", "https://v2-api.scrapegraphai.com/api").rstrip("/")
+    endpoint = f"{base_url}/extract"
+    headers = {
+        "SGAI-APIKEY": api_key,
+        "Content-Type": "application/json",
+    }
 
     results: list[EnrichmentResult] = []
 
@@ -136,26 +130,49 @@ def run_spike(urls: list[dict[str, str]]) -> list[EnrichmentResult]:
         url = item["url"]
         label = item["label"]
 
+        payload = {
+            "website_url": url,
+            "url": url,
+            "prompt": prompt,
+        }
+
         try:
-            response = client.smartscraper(
-                website_url=url,
-                user_prompt=prompt,
+            response = requests.post(
+                endpoint,
+                headers=headers,
+                json=payload,
+                timeout=30,
             )
 
-            payload: dict[str, Any]
-            if isinstance(response, dict):
-                payload = response
-            else:
-                payload = {"raw_response": str(response)}
+            if response.status_code >= 400:
+                results.append(
+                    EnrichmentResult(
+                        label=label,
+                        source_url=url,
+                        status="error",
+                        error=f"[{response.status_code}] {response.text[:500]}",
+                    )
+                )
+                continue
 
-            payload["source_url"] = payload.get("source_url") or url
+            try:
+                response_payload = response.json()
+            except Exception:
+                response_payload = {"raw_response": response.text}
+
+            if isinstance(response_payload, dict):
+                payload_data = response_payload
+            else:
+                payload_data = {"raw_response": str(response_payload)}
+
+            payload_data["source_url"] = payload_data.get("source_url") or url
 
             results.append(
                 EnrichmentResult(
                     label=label,
                     source_url=url,
                     status="success",
-                    data=payload,
+                    data=payload_data,
                 )
             )
 
@@ -174,6 +191,17 @@ def write_json_report(results: list[EnrichmentResult], path: Path, output_date: 
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
+def _extract_payload(data: dict[str, Any] | None) -> dict[str, Any]:
+    if not data:
+        return {}
+
+    nested_json = data.get("json")
+    if isinstance(nested_json, dict):
+        return nested_json
+
+    return data
+
+
 def write_markdown_report(results: list[EnrichmentResult], path: Path, output_date: str) -> None:
     lines = [f"# ScrapeGraph Enrichment Spike - {output_date}", ""]
 
@@ -183,12 +211,20 @@ def write_markdown_report(results: list[EnrichmentResult], path: Path, output_da
         lines.append(f"- Status: {result.status}")
 
         if result.status == "success" and result.data:
-            lines.append(f"- Title: {result.data.get('title')}")
-            lines.append(f"- Published date: {result.data.get('published_date')}")
-            lines.append(f"- Company names: {', '.join(result.data.get('company_names') or [])}")
-            lines.append(f"- Product or update: {result.data.get('product_or_update')}")
-            lines.append(f"- One-sentence summary: {result.data.get('one_sentence_summary')}")
-            lines.append(f"- Topic bucket: {result.data.get('topic_bucket')}")
+            payload = _extract_payload(result.data)
+
+            company_names = payload.get("company_names") or []
+            if isinstance(company_names, list):
+                company_names_text = ", ".join(str(item) for item in company_names)
+            else:
+                company_names_text = str(company_names)
+
+            lines.append(f"- Title: {payload.get('title')}")
+            lines.append(f"- Published date: {payload.get('published_date')}")
+            lines.append(f"- Company names: {company_names_text}")
+            lines.append(f"- Product or update: {payload.get('product_or_update')}")
+            lines.append(f"- One-sentence summary: {payload.get('one_sentence_summary')}")
+            lines.append(f"- Topic bucket: {payload.get('topic_bucket')}")
         else:
             lines.append(f"- Error: {result.error}")
 
