@@ -98,7 +98,7 @@ def run_spike(urls: list[dict[str, str]]) -> list[EnrichmentResult]:
         ]
 
     try:
-        from scrapegraph_py import FetchConfig, ScrapeGraphAI  # type: ignore
+        from scrapegraph_py import SyncClient  # type: ignore
     except Exception as exc:
         return [
             EnrichmentResult(
@@ -110,34 +110,54 @@ def run_spike(urls: list[dict[str, str]]) -> list[EnrichmentResult]:
             for item in urls
         ]
 
-    client = ScrapeGraphAI(api_key=api_key)
-    fetch_config = FetchConfig(timeout=12000)
+    try:
+        client = SyncClient(api_key=api_key, timeout=30)
+    except Exception as exc:
+        return [
+            EnrichmentResult(
+                label=item["label"],
+                source_url=item["url"],
+                status="error",
+                error=f"ScrapeGraphAI client initialization failed: {exc}",
+            )
+            for item in urls
+        ]
+
     results: list[EnrichmentResult] = []
+
+    prompt = (
+        EXTRACTION_PROMPT
+        + "\nReturn the answer as a JSON-like object with these keys: "
+        "title, published_date, company_names, product_or_update, "
+        "one_sentence_summary, topic_bucket, source_url."
+    )
 
     for item in urls:
         url = item["url"]
         label = item["label"]
 
         try:
-            response = client.extract(
-                EXTRACTION_PROMPT,
-                url=url,
-                schema=EXTRACTION_SCHEMA,
-                mode="reader",
-                fetch_config=fetch_config,
+            response = client.smartscraper(
+                website_url=url,
+                user_prompt=prompt,
             )
 
-            if getattr(response, "status", None) != "success":
-                error = getattr(response, "error", None) or "Unknown ScrapeGraphAI failure"
-                results.append(EnrichmentResult(label, url, "error", error=str(error)))
-                continue
-
-            payload = getattr(response.data, "json_data", None) or {}
-            if not isinstance(payload, dict):
-                payload = {}
+            payload: dict[str, Any]
+            if isinstance(response, dict):
+                payload = response
+            else:
+                payload = {"raw_response": str(response)}
 
             payload["source_url"] = payload.get("source_url") or url
-            results.append(EnrichmentResult(label, url, "success", data=payload))
+
+            results.append(
+                EnrichmentResult(
+                    label=label,
+                    source_url=url,
+                    status="success",
+                    data=payload,
+                )
+            )
 
         except Exception as exc:
             results.append(EnrichmentResult(label, url, "error", error=str(exc)))
