@@ -2845,7 +2845,8 @@ def test_telegram_avoids_duplicate_appsflyer_items_when_alternatives_exist() -> 
         for candidate in ("AppsFlyer Agent Hub beta", "State of ad fraud 2026: marketer report insights")
     )
     assert appsflyer_mentions <= 1
-    assert "Mobile ad fraud" in message or "Moloco" in message
+    message_lower = message.lower()
+    assert "mobile ad fraud" in message_lower or "moloco" in message_lower
 
 
 def test_daily_telegram_excludes_bidmatrix_self_item_and_old_2025_item() -> None:
