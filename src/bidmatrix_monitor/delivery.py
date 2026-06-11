@@ -3,10 +3,13 @@ from __future__ import annotations
 import html
 import os
 import re
+import time
 import smtplib
+from socket import timeout as socket_timeout
 from datetime import date
 from email.message import EmailMessage
 from pathlib import Path
+from urllib.error import URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -15,21 +18,40 @@ from dotenv import load_dotenv
 from .models import MonitorConfig
 
 
+class DeliveryError(RuntimeError):
+    """Raised when report generation succeeds but delivery fails."""
+
+
 def maybe_deliver_report(config: MonitorConfig, markdown_path: Path, report_type: str) -> None:
     load_dotenv()
     if not _delivery_enabled(config, report_type):
+        print(f"DELIVERY_SKIPPED report_type={report_type} reason=disabled")
         return
 
     channel = os.environ.get("BIDMATRIX_DELIVERY_CHANNEL", config.delivery.channel).strip().lower()
     subject = _subject(report_type, markdown_path)
     text = markdown_path.read_text(encoding="utf-8")
+    print(f"DELIVERY_ATTEMPT report_type={report_type} channel={channel}")
 
-    if channel == "telegram":
-        _send_telegram(subject, text, report_type)
-    elif channel == "email":
-        _send_email(subject, text)
+    try:
+        if channel == "telegram":
+            status = _send_telegram(subject, text, report_type)
+        elif channel == "email":
+            _send_email(subject, text)
+            status = "sent"
+        else:
+            raise RuntimeError(f"Unsupported delivery channel: {channel}")
+    except Exception as exc:
+        print(
+            f"DELIVERY_FAILED report_type={report_type} channel={channel} "
+            f"error_type={type(exc).__name__} error={exc}"
+        )
+        raise DeliveryError(f"{channel} delivery failed for {report_type} report") from exc
+
+    if status == "skipped_quality_gate":
+        print(f"DELIVERY_SKIPPED report_type={report_type} channel={channel} reason=quality_gate")
     else:
-        raise RuntimeError(f"Unsupported delivery channel: {channel}")
+        print(f"DELIVERY_SUCCEEDED report_type={report_type} channel={channel}")
 
 
 def _delivery_enabled(config: MonitorConfig, report_type: str) -> bool:
@@ -44,7 +66,7 @@ def _delivery_enabled(config: MonitorConfig, report_type: str) -> bool:
     return False
 
 
-def _send_telegram(subject: str, text: str, report_type: str) -> None:
+def _send_telegram(subject: str, text: str, report_type: str) -> str:
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
     if not token or not chat_id:
@@ -55,8 +77,9 @@ def _send_telegram(subject: str, text: str, report_type: str) -> None:
         reasons = _telegram_quality_gate_reasons(message)
         if reasons:
             print(f"QUALITY_GATE_FAILED: {'; '.join(reasons)}")
-            return
+            return "skipped_quality_gate"
     _post_telegram_message(token, chat_id, message)
+    return "sent"
 
 
 def _post_telegram_message(token: str, chat_id: str, message: str) -> None:
@@ -69,9 +92,28 @@ def _post_telegram_message(token: str, chat_id: str, message: str) -> None:
             "disable_notification": "false",
         }
     ).encode("utf-8")
-    request = Request(f"https://api.telegram.org/bot{token}/sendMessage", data=data, method="POST")
-    with urlopen(request, timeout=30) as response:
-        response.read()
+    for attempt in range(2):
+        request = Request(f"https://api.telegram.org/bot{token}/sendMessage", data=data, method="POST")
+        try:
+            with urlopen(request, timeout=30) as response:
+                response.read()
+            return
+        except Exception as exc:
+            if attempt == 0 and _is_retryable_delivery_error(exc):
+                print(
+                    "DELIVERY_RETRY "
+                    f"channel=telegram attempt=2 error_type={type(exc).__name__} error={exc}"
+                )
+                time.sleep(2)
+                continue
+            raise
+
+
+def _is_retryable_delivery_error(exc: Exception) -> bool:
+    if isinstance(exc, (TimeoutError, socket_timeout, URLError)):
+        return True
+    reason = getattr(exc, "reason", None)
+    return isinstance(reason, (TimeoutError, socket_timeout))
 
 
 def _telegram_quality_gate_reasons(message: str) -> list[str]:

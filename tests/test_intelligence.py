@@ -1,4 +1,5 @@
 from datetime import date, timedelta
+import re
 from typing import Optional, List
 
 from bidmatrix_monitor.intelligence import build_report, dedupe_items
@@ -1707,12 +1708,14 @@ def _market_watch_candidate(
     companies: Optional[List[str]] = None,
 ) -> NewsItem:
     slug = title.lower().replace(" ", "-").replace("/", "-")
+    published_date = (date.today() - timedelta(days=days_old)).isoformat()
+    why_now = re.sub(r"\b\d{4}-\d{2}-\d{2}\b", published_date, why_now, count=1)
     return NewsItem(
         topic_id="mw",
         topic_label="Market Watch",
         title=title,
         url=f"https://example.com/2026/04/{max(1, 30 - days_old):02d}/{slug}",
-        published_date=(date.today() - timedelta(days=days_old)).isoformat(),
+        published_date=published_date,
         summary=summary,
         why_now=why_now,
         mentioned_companies=companies or [],
@@ -2146,7 +2149,8 @@ def test_date_from_metadata_or_text_is_used_in_source() -> None:
     item.published_date = None
     report = build_report([item], config)
     markdown = render_markdown(report)
-    assert "Date: 2026-04-29" in markdown
+    expected_date = (date.today() - timedelta(days=30)).isoformat()
+    assert f"Date: {expected_date}" in markdown
 
 
 def test_digest_synthesis_reflects_selected_topic_buckets() -> None:

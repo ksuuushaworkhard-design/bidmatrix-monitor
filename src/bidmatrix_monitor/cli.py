@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 
 from .config import load_config
-from .delivery import maybe_deliver_report
+from .delivery import DeliveryError, maybe_deliver_report
 from .intelligence import build_report
 from .linkedin_watch import build_linkedin_watch_preview
 from .render import write_report
@@ -36,6 +36,7 @@ def main() -> None:
         return
 
     if args.weekly:
+        print("RUN_START mode=weekly")
         report_dir = Path(config.outputs.report_dir)
         weekly_digest = build_weekly_digest(report_dir, days=args.days)
         if int(weekly_digest.get("diagnostics", {}).get("weekly_selected_items_count", 0)) == 0:
@@ -44,19 +45,37 @@ def main() -> None:
         markdown_path, json_path = write_weekly_digest(report_dir, days=args.days)
         print(f"Wrote {markdown_path}")
         print(f"Wrote {json_path}")
-        maybe_deliver_report(config, markdown_path, "weekly")
+        print(
+            f"REPORTS_WRITTEN mode=weekly markdown={markdown_path} json={json_path}"
+        )
+        try:
+            maybe_deliver_report(config, markdown_path, "weekly")
+        except DeliveryError:
+            print("RUN_FINISHED mode=weekly status=delivery_failed")
+            raise SystemExit(2)
+        print("RUN_FINISHED mode=weekly status=success")
         return
 
+    print("RUN_START mode=daily")
     report, client = _build_daily_report(config, debug_exa=args.debug_exa)
     markdown_path, json_path, curated_json_path = write_report(report, Path(config.outputs.report_dir))
     print(f"Wrote {markdown_path}")
     print(f"Wrote {json_path}")
     print(f"Wrote {curated_json_path}")
+    print(
+        "REPORTS_WRITTEN mode=daily "
+        f"markdown={markdown_path} json={json_path} curated={curated_json_path}"
+    )
     client.print_collection_summary()
     _print_pipeline_state(report.diagnostics)
     if args.diagnostics:
         _print_diagnostics(report.diagnostics)
-    maybe_deliver_report(config, markdown_path, "daily")
+    try:
+        maybe_deliver_report(config, markdown_path, "daily")
+    except DeliveryError:
+        print("RUN_FINISHED mode=daily status=delivery_failed")
+        raise SystemExit(2)
+    print("RUN_FINISHED mode=daily status=success")
 
 
 def _build_daily_report(config, debug_exa: bool = False):
