@@ -155,6 +155,8 @@ def build_report(
         pr_hooks=_pr_hooks(primary_items)[:6],
         what_changed_today=_what_changed(primary_items, trends)[:8],
         exa_errors=list(exa_errors or []),
+        raw_items=list(items),
+        candidate_items=list(deduped),
     )
 
 def _daily_signals(curated: list[NewsItem], target: int) -> list[NewsItem]:

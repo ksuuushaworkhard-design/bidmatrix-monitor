@@ -154,3 +154,5 @@ class MonitorReport:
     pr_hooks: list[str]
     what_changed_today: list[str]
     exa_errors: list[str] = field(default_factory=list)
+    raw_items: list[NewsItem] = field(default_factory=list)
+    candidate_items: list[NewsItem] = field(default_factory=list)

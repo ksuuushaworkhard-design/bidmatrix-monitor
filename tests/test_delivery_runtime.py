@@ -109,10 +109,13 @@ def test_cli_daily_logs_delivery_failure_cleanly(monkeypatch, tmp_path, capsys) 
     fake_config = SimpleNamespace(outputs=SimpleNamespace(report_dir=str(tmp_path)))
     fake_client = SimpleNamespace(print_collection_summary=lambda: None)
     fake_report = SimpleNamespace(diagnostics={})
+    audit_path = tmp_path / "bidmatrix-monitor-2026-06-11-audit.json"
+    audit_path.write_text("{}", encoding="utf-8")
 
     monkeypatch.setattr(cli, "load_config", lambda path: fake_config)
     monkeypatch.setattr(cli, "_build_daily_report", lambda config, debug_exa=False: (fake_report, fake_client))
     monkeypatch.setattr(cli, "write_report", lambda report, report_dir: (markdown_path, json_path, curated_path))
+    monkeypatch.setattr(cli, "write_daily_audit_report", lambda report, report_dir: audit_path)
 
     def fail_delivery(config, markdown_path, report_type):
         raise delivery.DeliveryError("telegram delivery failed for daily report")
