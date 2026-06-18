@@ -5,6 +5,8 @@ from pathlib import Path
 
 from bidmatrix_monitor import cli as cli_module
 from bidmatrix_monitor.competitor_radar import (
+    _evaluate_signal,
+    _weekly_pattern,
     build_competitor_radar_preview,
     collect_competitor_radar_payload,
     load_competitor_radar_settings,
@@ -268,3 +270,131 @@ def test_render_competitor_radar_markdown_only_renders_kept_signals() -> None:
 
     assert "Company: AppsFlyer" in markdown
     assert "Company: Adjust" not in markdown
+
+
+def test_platform_unification_is_not_classified_as_funding() -> None:
+    signal = _evaluate_signal(
+        "Digital Turbine",
+        {
+            "company": "Digital Turbine",
+            "title": "Digital Turbine Introduces Launchpad, a Unified Platform for Modern App Distribution",
+            "url": "https://ir.digitalturbine.com/news-events/press-releases/detail/703/dt-introduces-launchpad-a-unified-platform-for-modern-app",
+            "published_date": "2026-06-10",
+            "source_name": "Digital Turbine",
+            "source_domain": "ir.digitalturbine.com",
+            "what_changed": "Digital Turbine launched Launchpad to bundle carrier/OEM distribution, direct installs, and in-app acquisition for app growth teams.",
+            "why_it_matters": "It gives advertisers a more unified app growth platform outside Apple, Google, and Meta.",
+            "bidmatrix_angle": "Digital Turbine is making a broad strategic platform move.",
+            "possible_use": "Competitors can use this for positioning and sales messaging.",
+            "market_theme": "app growth",
+        },
+        lookback_days=30,
+    )
+
+    assert signal["kept"] is True
+    assert signal["signal_type"] == "strategic_platform_move"
+    assert signal["signal_type"] != "funding_mna"
+    assert signal["keep_reason"] == "clear_platform_positioning_move"
+    assert signal["bidmatrix_angle"] == (
+        "DT is bundling carrier/OEM distribution, direct installs, and in-app acquisition "
+        "into one platform, creating a clearer counter-position for advertisers who want "
+        "scale outside Apple/Google/Meta."
+    )
+
+
+def test_targeted_bidmatrix_angle_polish_for_key_patterns() -> None:
+    liftoff = _evaluate_signal(
+        "Liftoff",
+        {
+            "company": "Liftoff",
+            "title": "Liftoff successfully completes IPO on Nasdaq",
+            "url": "https://example.com/liftoff-ipo",
+            "published_date": "2026-06-04",
+            "source_name": "Example",
+            "source_domain": "example.com",
+            "what_changed": "Liftoff completed an IPO for its AI mobile growth platform.",
+            "why_it_matters": "The IPO validates independent adtech platforms.",
+            "bidmatrix_angle": "Long analyst wording that should be replaced.",
+            "possible_use": "Long analyst wording that should be replaced.",
+            "market_theme": "AI media buying",
+        },
+        lookback_days=30,
+    )
+    apptweak = _evaluate_signal(
+        "AppTweak",
+        {
+            "company": "AppTweak",
+            "title": "AppTweak launches AI Visibility for Apps",
+            "url": "https://www.apptweak.com/en/aso-blog",
+            "published_date": "2026-06-12",
+            "source_name": "AppTweak",
+            "source_domain": "apptweak.com",
+            "what_changed": "AppTweak launched AI Visibility tools for ChatGPT and AI search.",
+            "why_it_matters": "AI search creates a new app discovery surface.",
+            "bidmatrix_angle": "Long analyst wording that should be replaced.",
+            "possible_use": "Long analyst wording that should be replaced.",
+            "market_theme": "app growth",
+        },
+        lookback_days=30,
+    )
+    airbridge = _evaluate_signal(
+        "Airbridge",
+        {
+            "company": "Airbridge",
+            "title": "ROAS for Subscription Apps: D7, D30, D60 Guide",
+            "url": "https://www.airbridge.io/en/blog/roas-for-subscription-apps",
+            "published_date": "2026-06-10",
+            "source_name": "Airbridge",
+            "source_domain": "airbridge.io",
+            "what_changed": "Airbridge published subscription app ROAS benchmarks from 75,000 apps.",
+            "why_it_matters": "Subscription marketers need better LTV and payback-period proof.",
+            "bidmatrix_angle": "Long analyst wording that should be replaced.",
+            "possible_use": "Long analyst wording that should be replaced.",
+            "market_theme": "measurement",
+        },
+        lookback_days=30,
+    )
+
+    assert liftoff["bidmatrix_angle"] == (
+        "Liftoff's IPO gives BidMatrix a public benchmark for how investors value "
+        "independent, AI-led mobile growth platforms versus walled-garden alternatives."
+    )
+    assert apptweak["bidmatrix_angle"] == (
+        "AppTweak is trying to extend ASO into AI-answer visibility, giving app growth "
+        "teams a new discovery channel to measure and optimize."
+    )
+    assert airbridge["bidmatrix_angle"] == (
+        "Airbridge is turning subscription-app ROAS benchmarks into sales enablement for "
+        "marketers who need better LTV and payback-period proof."
+    )
+
+
+def test_weekly_pattern_uses_controlled_kept_item_themes() -> None:
+    pattern = _weekly_pattern(
+        [
+            {
+                "signal_type": "integration",
+                "market_theme": "stationone raw phrase should not leak",
+                "title": "Kochava CTV attribution integration",
+                "what_changed": "Kochava connected CTV attribution to ticket purchases.",
+            },
+            {
+                "signal_type": "report_benchmark",
+                "market_theme": "very long source phrase should not leak",
+                "title": "AppsFlyer State of Fraud report",
+                "what_changed": "AppsFlyer published fraud benchmarks.",
+            },
+            {
+                "signal_type": "product_launch",
+                "market_theme": "company phrase should not leak",
+                "title": "AppTweak AI Visibility launch",
+                "what_changed": "AppTweak launched AI search visibility tools for app growth.",
+            },
+        ]
+    )
+
+    assert pattern == (
+        "Competitors are clustering around three themes: AI-assisted growth workflows, "
+        "benchmark-led sales narratives, and cross-channel attribution."
+    )
+    assert "stationone" not in pattern

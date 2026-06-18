@@ -337,6 +337,7 @@ def _evaluate_signal(
     item["market_theme"] = _optional_string(item.get("market_theme"))
 
     signal_type = _infer_signal_type(item)
+    _polish_signal_copy(item, signal_type)
     freshness_days = _freshness_days(item.get("published_date"))
     official_source = _is_official_source(company, item.get("source_domain"))
     marketing_value_score = _marketing_value_score(item, signal_type)
@@ -408,6 +409,8 @@ def _infer_signal_type(signal: dict[str, Any]) -> str:
     text = _signal_text(signal)
     title = _normalize_text(signal.get("title"))
 
+    if _contains_any(headline_text, ("launchpad", "unified platform", "single dashboard", "bundle", "bundling", "platform consolidation", "unify", "unifies")):
+        return "strategic_platform_move"
     if _contains_any(headline_text, ("case study", "customer story", "showcasing how", "showcases how", "doubled registrations", "growing ")) and _contains_any(text, ("roas", "app growth", "ua", "user acquisition", "performance")):
         return "case_study"
     if _contains_any(headline_text, ("q1", "q2", "q3", "q4", "earnings", "revenue", "results", "performance fueled", "revenue surges")):
@@ -432,7 +435,7 @@ def _infer_signal_type(signal: dict[str, Any]) -> str:
 def _marketing_value_score(signal: dict[str, Any], signal_type: str) -> int:
     text = _signal_text(signal)
     score = 0
-    if signal_type in {"product_launch", "integration", "partnership", "funding_mna"}:
+    if signal_type in {"product_launch", "integration", "partnership", "funding_mna", "strategic_platform_move"}:
         score += 2
     elif signal_type in {"report_benchmark", "case_study", "positioning_shift"}:
         score += 1
@@ -450,7 +453,7 @@ def _marketing_value_score(signal: dict[str, Any], signal_type: str) -> int:
 def _bd_value_score(signal: dict[str, Any], signal_type: str) -> int:
     text = _signal_text(signal)
     score = 0
-    if signal_type in {"partnership", "integration", "funding_mna", "product_launch"}:
+    if signal_type in {"partnership", "integration", "funding_mna", "product_launch", "strategic_platform_move"}:
         score += 2
     elif signal_type in {"case_study", "positioning_shift", "report_benchmark"}:
         score += 1
@@ -568,6 +571,7 @@ def _keep_reason(signal_type: str) -> str:
         "partnership": "clear_partner_or_distribution_move",
         "integration": "clear_product_integration_signal",
         "product_launch": "clear_product_launch_signal",
+        "strategic_platform_move": "clear_platform_positioning_move",
         "report_benchmark": "fresh_report_with_competitive_value",
         "case_study": "clear_case_study_with_positioning_value",
         "positioning_shift": "clear_positioning_or_gtm_shift",
@@ -578,21 +582,101 @@ def _keep_reason(signal_type: str) -> str:
 def _weekly_pattern(signals: list[dict[str, Any]]) -> str:
     themes: dict[str, int] = {}
     for signal in signals:
-        theme = str(signal.get("market_theme") or "").strip().lower()
+        theme = _weekly_theme_label(signal)
         if not theme:
             continue
         themes[theme] = themes.get(theme, 0) + 1
 
     if not themes:
-        return "Recent competitor signals are scattered across product, measurement, and growth narratives rather than one dominant theme."
+        return "Competitors are spread across product, measurement, and growth narratives rather than one dominant theme."
 
     top = sorted(themes.items(), key=lambda item: (-item[1], item[0]))[:3]
-    labels = [theme.replace("_", " ") for theme, _count in top]
+    labels = [theme for theme, _count in top]
     if len(labels) == 1:
-        return f"Recent competitor signals cluster around {labels[0]}."
+        return f"Competitors are clustering around one theme: {labels[0]}."
     if len(labels) == 2:
-        return f"Recent competitor signals cluster around {labels[0]} and {labels[1]}."
-    return f"Recent competitor signals cluster around {labels[0]}, {labels[1]}, and {labels[2]}."
+        return f"Competitors are clustering around two themes: {labels[0]} and {labels[1]}."
+    return f"Competitors are clustering around three themes: {labels[0]}, {labels[1]}, and {labels[2]}."
+
+
+def _polish_signal_copy(signal: dict[str, Any], signal_type: str) -> None:
+    company = _normalize_text(signal.get("company"))
+    text = _signal_text(signal)
+
+    if "liftoff" in company and signal_type == "funding_mna":
+        signal["bidmatrix_angle"] = (
+            "Liftoff's IPO gives BidMatrix a public benchmark for how investors value "
+            "independent, AI-led mobile growth platforms versus walled-garden alternatives."
+        )
+        signal["possible_use"] = (
+            "Use the IPO narrative as a BD hook for independent mobile growth platforms, "
+            "AI campaign operations, and public-market validation."
+        )
+        return
+
+    if "digital turbine" in company and signal_type == "strategic_platform_move":
+        signal["bidmatrix_angle"] = (
+            "DT is bundling carrier/OEM distribution, direct installs, and in-app acquisition "
+            "into one platform, creating a clearer counter-position for advertisers who want "
+            "scale outside Apple/Google/Meta."
+        )
+        signal["possible_use"] = (
+            "Use this as a sales talking point on alternative app distribution and non-walled-garden scale."
+        )
+        return
+
+    if "apptweak" in company and _contains_any(text, ("ai visibility", "ai search", "chatgpt", "llm")):
+        signal["bidmatrix_angle"] = (
+            "AppTweak is trying to extend ASO into AI-answer visibility, giving app growth "
+            "teams a new discovery channel to measure and optimize."
+        )
+        signal["possible_use"] = (
+            "Use this as a content angle on app discovery moving beyond store rankings into AI answers."
+        )
+        return
+
+    if "airbridge" in company and signal_type == "report_benchmark":
+        signal["bidmatrix_angle"] = (
+            "Airbridge is turning subscription-app ROAS benchmarks into sales enablement for "
+            "marketers who need better LTV and payback-period proof."
+        )
+        signal["possible_use"] = (
+            "Use the benchmark framing for BD conversations about subscription growth, LTV, and payback periods."
+        )
+        return
+
+    signal["bidmatrix_angle"] = _shorten_field(signal.get("bidmatrix_angle"), max_sentences=1)
+    signal["possible_use"] = _shorten_field(signal.get("possible_use"), max_sentences=1)
+
+
+def _weekly_theme_label(signal: dict[str, Any]) -> str | None:
+    signal_type = str(signal.get("signal_type") or "")
+    text = _signal_text(signal)
+
+    if signal_type in {"integration", "partnership"} and _contains_any(text, ("attribution", "measurement", "ctv", "desktop", "tv")):
+        return "cross-channel attribution"
+    if _contains_any(text, ("ai", "ml", "cortex", "llm", "chatgpt", "automation")):
+        return "AI-assisted growth workflows"
+    if signal_type == "report_benchmark" or _contains_any(text, ("benchmark", "report", "state of", "roas", "fraud")):
+        return "benchmark-led sales narratives"
+    if signal_type == "strategic_platform_move":
+        return "platform consolidation"
+    if signal_type == "funding_mna":
+        return "adtech market structure"
+    if _contains_any(text, ("retail media", "commerce media")):
+        return "retail media expansion"
+    if signal_type in {"product_launch", "integration"}:
+        return "product-led positioning"
+    return None
+
+
+def _shorten_field(value: Any, *, max_sentences: int) -> str | None:
+    text = _optional_string(value)
+    if not text:
+        return None
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    shortened = " ".join(sentence for sentence in sentences[:max_sentences] if sentence).strip()
+    return shortened or text
 
 
 def _sort_key(signal: dict[str, Any]) -> tuple[int, int, int, str]:
