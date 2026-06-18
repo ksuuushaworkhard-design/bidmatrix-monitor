@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 
 from .audit import write_daily_audit_report
+from .competitor_radar import build_competitor_radar_preview
 from .config import load_config
 from .delivery import DeliveryError, maybe_deliver_report
 from .intelligence import build_report
@@ -21,10 +22,42 @@ def main() -> None:
     parser.add_argument("--diagnostics", action="store_true", help="Print curation diagnostics after a daily run.")
     parser.add_argument("--debug-exa", action="store_true", help="Print detailed Exa query timing logs.")
     parser.add_argument(
+        "--competitor-radar-preview",
+        action="store_true",
+        help="Build a preview-only Competitor Marketing Radar report from a capped source list.",
+    )
+    parser.add_argument(
+        "--competitor-radar-config",
+        default="config/competitor_radar_sources.json",
+        help="Path to competitor radar sources config.",
+    )
+    parser.add_argument(
+        "--competitor-radar-max-companies",
+        type=int,
+        default=None,
+        help="Optional max companies to check for the competitor radar preview.",
+    )
+    parser.add_argument(
         "--linkedin-watch-preview",
         help="Build a local LinkedIn Watch markdown preview from a manual input JSON file.",
     )
     args = parser.parse_args()
+
+    if args.competitor_radar_preview:
+        markdown_path, json_path, payload = build_competitor_radar_preview(
+            args.competitor_radar_config,
+            max_companies=args.competitor_radar_max_companies,
+        )
+        print(f"Wrote {markdown_path}")
+        print(f"Wrote {json_path}")
+        print(
+            "COMPETITOR_RADAR_PREVIEW "
+            f"companies_checked={payload['companies_checked']} "
+            f"companies_with_useful_signals={payload['companies_with_useful_signals']} "
+            f"exa_total_queries={payload['exa_total_queries']} "
+            f"exa_errors_count={payload['exa_errors_count']}"
+        )
+        return
 
     if args.linkedin_watch_preview:
         output_path = build_linkedin_watch_preview(args.linkedin_watch_preview)
