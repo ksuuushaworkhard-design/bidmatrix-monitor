@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import json
 import os
 import re
 import time
@@ -31,6 +32,13 @@ def maybe_deliver_report(config: MonitorConfig, markdown_path: Path, report_type
     channel = os.environ.get("BIDMATRIX_DELIVERY_CHANNEL", config.delivery.channel).strip().lower()
     subject = _subject(report_type, markdown_path)
     text = markdown_path.read_text(encoding="utf-8")
+    state_path = _delivery_state_path(markdown_path)
+    run_date = _subject_date(subject)
+
+    if report_type == "daily" and channel == "telegram" and _daily_delivery_already_sent(state_path, channel, run_date):
+        print(f"DAILY_DELIVERY_SKIPPED reason=already_sent_today date={run_date.isoformat()}")
+        return
+
     print(f"DELIVERY_ATTEMPT report_type={report_type} channel={channel}")
 
     try:
@@ -51,7 +59,48 @@ def maybe_deliver_report(config: MonitorConfig, markdown_path: Path, report_type
     if status == "skipped_quality_gate":
         print(f"DELIVERY_SKIPPED report_type={report_type} channel={channel} reason=quality_gate")
     else:
+        if report_type == "daily" and channel == "telegram":
+            _mark_daily_delivery_sent(state_path, channel, run_date)
         print(f"DELIVERY_SUCCEEDED report_type={report_type} channel={channel}")
+
+
+def _delivery_state_path(markdown_path: Path) -> Path:
+    return markdown_path.parent / "delivery-state.json"
+
+
+def _load_delivery_state(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _save_delivery_state(path: Path, state: dict) -> None:
+    path.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def _daily_delivery_already_sent(path: Path, channel: str, run_date: date) -> bool:
+    state = _load_delivery_state(path)
+    return (
+        state.get("daily", {})
+        .get(channel, {})
+        .get(run_date.isoformat(), {})
+        .get("status")
+        == "sent"
+    )
+
+
+def _mark_daily_delivery_sent(path: Path, channel: str, run_date: date) -> None:
+    state = _load_delivery_state(path)
+    daily = state.setdefault("daily", {})
+    by_channel = daily.setdefault(channel, {})
+    by_channel[run_date.isoformat()] = {
+        "status": "sent",
+        "sent_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    _save_delivery_state(path, state)
 
 
 def _delivery_enabled(config: MonitorConfig, report_type: str) -> bool:
