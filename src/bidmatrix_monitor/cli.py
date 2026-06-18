@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from .audit import write_daily_audit_report
 from .config import load_config
 from .delivery import DeliveryError, maybe_deliver_report
 from .intelligence import build_report
@@ -58,13 +59,16 @@ def main() -> None:
 
     print("RUN_START mode=daily")
     report, client = _build_daily_report(config, debug_exa=args.debug_exa)
-    markdown_path, json_path, curated_json_path = write_report(report, Path(config.outputs.report_dir))
+    report_dir = Path(config.outputs.report_dir)
+    markdown_path, json_path, curated_json_path = write_report(report, report_dir)
+    audit_json_path = write_daily_audit_report(report, report_dir)
     print(f"Wrote {markdown_path}")
     print(f"Wrote {json_path}")
     print(f"Wrote {curated_json_path}")
+    print(f"Wrote {audit_json_path}")
     print(
         "REPORTS_WRITTEN mode=daily "
-        f"markdown={markdown_path} json={json_path} curated={curated_json_path}"
+        f"markdown={markdown_path} json={json_path} curated={curated_json_path} audit={audit_json_path}"
     )
     client.print_collection_summary()
     _print_pipeline_state(report.diagnostics)
