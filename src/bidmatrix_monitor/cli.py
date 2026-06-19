@@ -9,6 +9,7 @@ from .config import load_config
 from .delivery import DeliveryError, maybe_deliver_report
 from .intelligence import build_report
 from .linkedin_watch import build_linkedin_watch_preview
+from .market_brief_v2 import build_market_brief_v2_preview
 from .render import write_report
 from .weekly import build_weekly_digest, write_weekly_digest
 
@@ -41,7 +42,36 @@ def main() -> None:
         "--linkedin-watch-preview",
         help="Build a local LinkedIn Watch markdown preview from a manual input JSON file.",
     )
+    parser.add_argument(
+        "--market-brief-v2-preview",
+        action="store_true",
+        help="Build a preview-only Market Brief v2 report without Telegram delivery.",
+    )
+    parser.add_argument(
+        "--market-brief-v2-max-queries",
+        type=int,
+        default=20,
+        help="Maximum Exa queries for the Market Brief v2 preview, capped internally at 20.",
+    )
     args = parser.parse_args()
+
+    if args.market_brief_v2_preview:
+        markdown_path, json_path, audit_path, payload = build_market_brief_v2_preview(
+            max_queries=args.market_brief_v2_max_queries
+        )
+        print(f"Wrote {markdown_path}")
+        print(f"Wrote {json_path}")
+        print(f"Wrote {audit_path}")
+        print(
+            "MARKET_BRIEF_V2_PREVIEW "
+            f"exa_total_queries={payload['exa_total_queries']} "
+            f"exa_errors_count={payload['exa_errors_count']} "
+            f"exa_timeouts_count={payload['exa_timeouts_count']} "
+            f"raw_results_count={payload['raw_results_count']} "
+            f"kept_signals_count={payload['kept_signals_count']} "
+            f"watchlist_signals_count={payload['watchlist_signals_count']}"
+        )
+        return
 
     if args.competitor_radar_preview:
         markdown_path, json_path, payload = build_competitor_radar_preview(
