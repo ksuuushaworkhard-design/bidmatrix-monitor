@@ -311,11 +311,13 @@ def _marketing_insights_telegram_message(text: str, run_date: date) -> str:
 
     lines.extend(["", "<b>Company insights</b>"])
     if items:
+        use_counts: dict[str, int] = {}
         for index, item in enumerate(items[:5], start=1):
-            lines.append(f"{index}. {html.escape(_shorten(item['action'], 220))}")
-            idea = item.get("content_bd_idea") or item.get("bidmatrix_use") or item.get("marketing_insight")
-            if idea:
-                lines.append(f"Use: {html.escape(_shorten(idea, 180))}")
+            lines.append(f"{index}. {html.escape(_shorten(_marketing_insights_company_line(item, index), 220))}")
+            family = _marketing_insights_theme_family(item)
+            family_index = use_counts.get(family, 0)
+            use_counts[family] = family_index + 1
+            lines.append(f"Use: {html.escape(_shorten(_marketing_insights_use_line(item, family_index), 180))}")
             lines.append("")
     else:
         lines.append("No strong marketing insight signals passed the quality gate.")
@@ -325,9 +327,113 @@ def _marketing_insights_telegram_message(text: str, run_date: date) -> str:
             lines.append("")
         lines.append("<b>Watchlist</b>")
         for item in watchlist[:3]:
-            lines.append(f"- {html.escape(_shorten(item, 160))}")
+            lines.append(f"- {html.escape(_shorten(_marketing_insights_watchlist_line(item), 160))}")
 
     return _truncate("\n".join(lines).rstrip(), 3800)
+
+
+def _marketing_insights_company_line(item: dict[str, str], index: int = 1) -> str:
+    company = _marketing_insights_company(item.get("action", ""))
+    text = _normalize_delivery_text(" ".join(item.values()))
+    if company == "AppFollow" and _has_delivery_terms(text, "ai", "growth", "workflow"):
+        return "AppFollow — using AI messaging to move closer to campaign workflow and growth operations."
+    if company == "Kochava" and _has_delivery_terms(text, "ai", "measurement"):
+        return "Kochava — using AI language to make measurement look more actionable for UA teams."
+    if company == "Mintegral" and _has_delivery_terms(text, "ai", "optimization"):
+        return "Mintegral — framing AI as part of media-buying optimization, not just ad network automation."
+    if _has_delivery_terms(text, "fraud", "verification", "traffic quality", "inventory-quality"):
+        return f"{company} — turning traffic quality and verification into a budget-protection message."
+    if _has_delivery_terms(text, "measurement", "attribution", "roas", "incrementality"):
+        return f"{company} — trying to make measurement feel closer to growth decisions and budget proof."
+    if _has_delivery_terms(text, "market-structure", "consolidation", "platform positioning"):
+        return f"{company} — using platform scale and market structure as a credibility story."
+    if _has_delivery_terms(text, "ai", "automation", "optimization", "campaign operations"):
+        variants = (
+            f"{company} — pushing AI from a feature claim into a growth-operations story.",
+            f"{company} — making AI sound like part of the daily UA workflow.",
+            f"{company} — connecting AI language to campaign decisions and performance proof.",
+        )
+        return variants[(index - 1) % len(variants)]
+    if _has_delivery_terms(text, "partnership", "integration", "ecosystem"):
+        return f"{company} — using integrations to look more connected inside the growth stack."
+    return f"{company} — turning a public move into a sharper marketing narrative."
+
+
+def _marketing_insights_use_line(item: dict[str, str], index: int = 0) -> str:
+    text = _normalize_delivery_text(" ".join(item.values()))
+    if _has_delivery_terms(text, "market-structure", "consolidation", "platform positioning"):
+        variants = (
+            "Counter-positioning — BidMatrix can sound focused and performance-first while larger platforms talk about consolidation.",
+            "BD angle — ask clients whether a bigger platform actually improves growth quality or only adds complexity.",
+        )
+        return variants[index % len(variants)]
+    if _has_delivery_terms(text, "fraud", "verification", "traffic quality", "inventory-quality"):
+        variants = (
+            "Website message — connect BidMatrix AI to fraud protection, quality users, and ROAS proof.",
+            "BD angle — ask clients whether their tools improve traffic quality or only speed up reporting.",
+        )
+        return variants[index % len(variants)]
+    if _has_delivery_terms(text, "measurement", "attribution", "roas", "incrementality"):
+        variants = (
+            "LinkedIn post — why measurement vendors are trying to own more of the growth workflow.",
+            "BD angle — ask how teams connect attribution, traffic quality, and budget decisions.",
+        )
+        return variants[index % len(variants)]
+    if _has_delivery_terms(text, "ai", "automation", "optimization", "campaign operations"):
+        variants = (
+            "LinkedIn post — why every app tool now wants to look like a growth platform.",
+            "BD angle — ask clients whether their AI tools improve traffic quality or only speed up reporting.",
+            "Sales deck note — show BidMatrix AI as tied to quality users, spend control, and ROAS proof.",
+        )
+        return variants[index % len(variants)]
+    if _has_delivery_terms(text, "partnership", "integration", "ecosystem"):
+        return "Partner outreach — use this as a reason to ask where shared data could reduce workflow friction."
+    return "LinkedIn post — turn this into a short point about practical growth positioning."
+
+
+def _marketing_insights_watchlist_line(value: str) -> str:
+    company = _marketing_insights_company(value)
+    text = _normalize_delivery_text(value)
+    if _has_delivery_terms(text, "measurement", "attribution", "roas", "incrementality"):
+        return f"{company} — watch how it connects measurement, AI, and budget decisions."
+    if _has_delivery_terms(text, "ai", "automation", "optimization", "growth operations"):
+        return f"{company} — watch whether it pushes analytics into growth-ops positioning."
+    if _has_delivery_terms(text, "market", "platform", "dsp", "credibility", "infrastructure"):
+        return f"{company} — watch for market credibility or DSP infrastructure messaging."
+    if _has_delivery_terms(text, "fraud", "quality", "verification"):
+        return f"{company} — watch whether quality and verification become stronger sales hooks."
+    return f"{company} — watch for a clearer marketing or BD angle."
+
+
+def _marketing_insights_theme_family(item: dict[str, str]) -> str:
+    text = _normalize_delivery_text(" ".join(item.values()))
+    if _has_delivery_terms(text, "market-structure", "consolidation", "platform positioning"):
+        return "market_structure"
+    if _has_delivery_terms(text, "fraud", "verification", "traffic quality", "inventory-quality"):
+        return "traffic_quality"
+    if _has_delivery_terms(text, "measurement", "attribution", "roas", "incrementality"):
+        return "measurement"
+    if _has_delivery_terms(text, "ai", "automation", "optimization", "campaign operations"):
+        return "ai"
+    if _has_delivery_terms(text, "partnership", "integration", "ecosystem"):
+        return "partnership"
+    return "other"
+    
+
+def _marketing_insights_company(value: str) -> str:
+    cleaned = _clean_markdown_text(value).strip()
+    match = re.match(r"(?P<company>[A-Z][A-Za-z0-9.& ]+?)\s+(?:is|—|-)\b", cleaned)
+    if match:
+        return match.group("company").strip()
+    return cleaned.split(" ", 1)[0].strip(":-—") or "Company"
+
+
+def _has_delivery_terms(text: str, *terms: str) -> bool:
+    return any(term in text for term in terms)
+
+
+def _normalize_delivery_text(value: str) -> str:
+    return re.sub(r"\s+", " ", value.lower())
 
 def _telegram_weekly_message(subject: str, text: str) -> str:
     date_label = _date_from_subject(subject)
