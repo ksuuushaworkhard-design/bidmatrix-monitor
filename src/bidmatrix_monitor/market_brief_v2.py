@@ -19,7 +19,7 @@ from .exa_client import TimeoutExa
 MAX_EXA_QUERIES = 14
 V2_RESULTS_PER_QUERY = 3
 MAX_TOP_SIGNALS = 8
-MAX_WATCHLIST_ITEMS = 4
+MAX_WATCHLIST_ITEMS = 3
 MAX_SOURCE_AGE_DAYS = 45
 ALLOWED_SIGNAL_TYPES = {
     "product_launch",
@@ -212,12 +212,18 @@ def collect_market_brief_v2_payload(*, max_queries: int = MAX_EXA_QUERIES) -> di
         candidates.extend(_signals_from_response(response, query))
 
     deduped = _dedupe_candidates(candidates)
-    evaluated = [_evaluate_signal(candidate) for candidate in deduped]
+    evaluated = _apply_compact_markdown_quality_gate([_evaluate_signal(candidate) for candidate in deduped])
     kept = [item for item in evaluated if item["kept"]]
-    skipped = [item for item in evaluated if not item["kept"] and not item["watchlist"]]
+    top_candidates = _dedupe_related_signals(sorted(kept, key=_rank_key))
+    top_signals, duplicate_top_urls = _dedupe_brief_top_signals(top_candidates, limit=MAX_TOP_SIGNALS)
+    evaluated = _mark_duplicate_top_signals(evaluated, duplicate_top_urls)
     watchlist = [item for item in evaluated if item["watchlist"] and not item["kept"]]
-    top_signals = _dedupe_related_signals(sorted(kept, key=_rank_key))[:MAX_TOP_SIGNALS]
-    watchlist_items = sorted(watchlist, key=_rank_key)[:MAX_WATCHLIST_ITEMS]
+    watchlist_items, duplicate_watchlist_urls = _dedupe_watchlist_items_with_duplicate_urls(
+        sorted(watchlist, key=_rank_key),
+        limit=MAX_WATCHLIST_ITEMS,
+    )
+    evaluated = _mark_duplicate_watchlist_items(evaluated, duplicate_watchlist_urls)
+    skipped = [item for item in evaluated if not item["kept"] and not item["watchlist"]]
 
     run_date = date.today().isoformat()
     payload = {
@@ -235,6 +241,7 @@ def collect_market_brief_v2_payload(*, max_queries: int = MAX_EXA_QUERIES) -> di
         "skipped_signals_count": len(skipped),
         "watchlist_signals_count": len(watchlist_items),
         "executive_summary": _executive_summary(top_signals),
+        "so_what": _so_what(top_signals),
         "top_signals": top_signals,
         "sections": _sections(top_signals),
         "recommended_actions": _recommended_actions(top_signals),
@@ -263,17 +270,11 @@ def write_market_brief_v2_preview(
 
 
 def render_market_brief_v2_markdown(payload: dict[str, Any]) -> str:
-    lines = [f"# Market Brief v2 - {payload['run_date']}", ""]
+    lines = [f"# Market Brief v2 — {payload['run_date']}", ""]
 
-    lines.extend(["## 1. Executive Summary"])
-    summary = payload.get("executive_summary") or []
-    if summary:
-        lines.extend([f"- {item}" for item in summary])
-    else:
-        lines.append("- No strong BidMatrix-relevant market signals passed the v2 quality gate.")
-    lines.append("")
+    lines.extend(["## Today’s marketing insight", _today_marketing_insight(payload), ""])
 
-    lines.extend(["## 2. Top Signals", ""])
+    lines.extend(["## What companies are doing", ""])
     top_signals = payload.get("top_signals", [])
     if top_signals:
         for index, signal in enumerate(top_signals, start=1):
@@ -281,38 +282,11 @@ def render_market_brief_v2_markdown(payload: dict[str, Any]) -> str:
     else:
         lines.extend(["No top signals passed the v2 quality gate.", ""])
 
-    for heading in (
-        "Competitor / Partner Moves",
-        "Measurement / MMP / Attribution",
-        "Traffic Quality / Fraud / Inventory",
-        "AI / Automation / Agentic UA",
-    ):
-        section_items = payload.get("sections", {}).get(heading, [])
-        lines.extend([f"## {heading}", ""])
-        if section_items:
-            for signal in section_items:
-                lines.append(
-                    f"- **{signal['title']}** — {signal['bidmatrix_angle']} "
-                    f"[{_source_label(signal)}]({signal['url']})"
-                )
-        else:
-            lines.append("No strong signals in this preview run.")
-        lines.append("")
-
-    lines.extend(["## 7. Recommended Actions for BidMatrix"])
-    actions = payload.get("recommended_actions") or []
-    if actions:
-        lines.extend([f"- {action}" for action in actions])
-    else:
-        lines.append("- No recommended actions until stronger signals appear.")
-    lines.append("")
-
-    lines.extend(["## 8. Watchlist"])
+    lines.extend(["## Watchlist"])
     watchlist = payload.get("watchlist", [])
     if watchlist:
         for signal in watchlist:
-            reason = signal.get("skip_reason") or "watchlist_signal"
-            lines.append(f"- **{signal['title']}** — {reason}. [{_source_label(signal)}]({signal['url']})")
+            lines.append(f"- {_brief_watchlist_sentence(signal)}")
     else:
         lines.append("- No watchlist items in this preview run.")
     lines.append("")
@@ -445,8 +419,6 @@ def _evaluate_signal(candidate: dict[str, Any]) -> dict[str, Any]:
     category = _infer_category(item)
     item["signal_type"] = signal_type
     item["category"] = category
-    item["bidmatrix_angle"] = _clean_sentence(item.get("bidmatrix_angle")) or _fallback_angle(item)
-    item["suggested_action"] = _clean_sentence(item.get("suggested_action")) or _fallback_action(item)
     relevance_score = _relevance_score(item)
     marketing_value_score = _marketing_value_score(item, signal_type)
     bd_value_score = _bd_value_score(item, signal_type)
@@ -468,7 +440,11 @@ def _evaluate_signal(candidate: dict[str, Any]) -> dict[str, Any]:
     elif noise_risk >= 4:
         skip_reason = "high_noise_risk"
     elif relevance_score < 3:
-        skip_reason = "low_bidmatrix_relevance"
+        if relevance_score >= 2 and marketing_value_score + bd_value_score >= 4 and noise_risk <= 1:
+            watchlist = True
+            skip_reason = "interesting_but_not_strong_enough"
+        else:
+            skip_reason = "low_bidmatrix_relevance"
     elif marketing_value_score < 2 and bd_value_score < 2:
         if total_score >= 6 and confidence in {"high", "medium"}:
             watchlist = True
@@ -497,6 +473,8 @@ def _evaluate_signal(candidate: dict[str, Any]) -> dict[str, Any]:
             "kept": kept,
             "watchlist": watchlist,
             "noise_risk": noise_risk,
+            "bidmatrix_angle": _clean_sentence(item.get("bidmatrix_angle")) or _fallback_angle(item),
+            "suggested_action": _clean_sentence(item.get("suggested_action")) or _fallback_action(item),
         }
     )
     return item
@@ -504,17 +482,384 @@ def _evaluate_signal(candidate: dict[str, Any]) -> dict[str, Any]:
 
 def _signal_lines(index: int, signal: dict[str, Any]) -> list[str]:
     return [
-        f"### {index}. {signal['title']}",
-        f"- Source: [{_source_label(signal)}]({signal['url']})",
-        f"- Date: {signal.get('published_date') or 'Unknown'}",
-        f"- What happened: {signal.get('what_happened') or 'Unknown.'}",
-        f"- Why it matters: {signal.get('why_it_matters') or 'Unknown.'}",
-        f"- BidMatrix angle: {signal['bidmatrix_angle']}",
-        f"- Suggested content/BD action: {signal['suggested_action']}",
-        f"- Signal type: {signal['signal_type']}",
-        f"- Confidence: {signal['confidence']}",
+        f"{index}. {_brief_signal_sentence(signal)}",
+        f"Marketing insight: {_marketing_insight(signal, index)}",
+        f"What BidMatrix can use: {_bidmatrix_use(signal)}",
+        f"Content / BD idea: {_content_bd_idea(signal, index)}",
         "",
     ]
+
+
+KNOWN_COMPANY_NAMES = (
+    "AppsFlyer",
+    "Adjust",
+    "Singular",
+    "Branch",
+    "Kochava",
+    "Airbridge",
+    "Tenjin",
+    "AppMetrica",
+    "AppTweak",
+    "Sensor Tower",
+    "data.ai",
+    "Apptica",
+    "MobileAction",
+    "SplitMetrics",
+    "AppFollow",
+    "Moloco",
+    "AppLovin",
+    "Liftoff",
+    "Mintegral",
+    "Unity",
+    "ironSource",
+    "Digital Turbine",
+    "Smadex",
+    "Jampp",
+    "Kayzen",
+    "Remerge",
+    "YouAppi",
+    "StackAdapt",
+    "The Trade Desk",
+    "PubMatic",
+    "Magnite",
+    "OpenX",
+    "Equativ",
+    "Index Exchange",
+    "Pixalate",
+    "HUMAN",
+    "DoubleVerify",
+    "Integral Ad Science",
+    "IAS",
+    "Fraudlogix",
+    "GeoEdge",
+    "Mfilterit",
+    "TrafficGuard",
+    "mParticle",
+    "Braze",
+    "CleverTap",
+    "OneSignal",
+    "Iterable",
+    "MoEngage",
+    "RevenueCat",
+    "Superwall",
+    "Adapty",
+    "Qonversion",
+    "Amplitude",
+    "Mixpanel",
+    "Appsumer",
+    "Funnel",
+    "Adriel",
+    "Marin Software",
+    "Luna Labs",
+    "Geeklab",
+    "YellowHEAD",
+    "Bidalgo",
+    "Consumer Acquisition",
+    "AppAgent",
+    "Phiture",
+    "Growth Gems",
+    "Mobile Dev Memo",
+    "Business of Apps",
+    "Bedrock",
+    "Advertible",
+    "CloudX",
+    "Bigabid",
+    "Affle",
+    "AdColony",
+    "Mobkoi",
+    "xpln.ai",
+    "Cint",
+    "Nexxen",
+    "InMobi",
+    "BidMachine",
+    "Perion",
+    "WunderKIND Ads",
+    "Wunderkind",
+    "TripleLift",
+    "Walmart Connect",
+    "Verve",
+)
+
+
+MMP_COMPANY_NAMES = {"AppsFlyer", "Adjust", "Singular", "Branch", "Kochava", "Airbridge", "Tenjin", "AppMetrica"}
+QUALITY_COMPANY_NAMES = {"Pixalate", "HUMAN", "DoubleVerify", "Integral Ad Science", "IAS", "Fraudlogix", "GeoEdge", "Mfilterit", "TrafficGuard"}
+
+
+def _display_run_date(run_date: str) -> str:
+    try:
+        parsed = date.fromisoformat(run_date)
+    except ValueError:
+        return run_date
+    return f"{parsed.strftime('%B')} {parsed.day}, {parsed.year}"
+
+
+def _today_marketing_insight(payload: dict[str, Any]) -> str:
+    signals = payload.get("top_signals", [])
+    if not signals:
+        return "No strong BidMatrix-relevant marketing insight passed the v2 quality gate."
+    categories = {signal.get("category") for signal in signals}
+    if "AI / Automation / Agentic UA" in categories and "Measurement / MMP / Attribution" in categories:
+        return "AI campaign operations and measurement proof are becoming the main stories competitors want to own in mobile growth. BidMatrix can use this to connect AI, traffic quality, and measurable performance in one clearer narrative."
+    if "AI / Automation / Agentic UA" in categories:
+        return "Competitors are framing AI as a campaign-operations story, not just an automation feature. BidMatrix can answer with a measurable optimization and traffic-quality narrative."
+    if "Measurement / MMP / Attribution" in categories:
+        return "Measurement vendors are trying to own full-funnel performance proof. BidMatrix can connect this to transparent ROAS, user quality, and partner-neutral reporting."
+    if "Traffic Quality / Fraud / Inventory" in categories:
+        return "Verification and quality companies are turning fraud risk into a budget-protection story. BidMatrix can use the same pressure to strengthen verified traffic positioning."
+    if "Competitor / Partner Moves" in categories:
+        return "Partner moves are creating new ecosystem stories that BD teams can use as timely outreach hooks. BidMatrix can turn them into counter-positioning and partner conversations."
+    return "Fresh market signals are creating practical positioning angles for BidMatrix marketing and BD."
+
+
+def _brief_signal_sentence(signal: dict[str, Any]) -> str:
+    company = _signal_company_subject(signal)
+    text = _signal_search_text(signal)
+    effective_category = _effective_brief_category(signal)
+    if _has_terms(text, "mobkoi", "xpln"):
+        return "Mobkoi and xpln.ai are framing creative intelligence as part of campaign measurement."
+    if company == "Cint" and _has_any(text.lower(), ("brand", "measurement")):
+        return "Cint is positioning brand measurement as a performance-marketing input."
+    if company == "Nexxen" and "mcp" in text.lower():
+        return "Nexxen is building an agentic workflow story around MCP tools."
+    if effective_category == "Traffic Quality / Fraud / Inventory" and _has_any(text.lower(), ("fraud", "ivt", "invalid traffic", "traffic quality")):
+        return f"{company} is using fraud and inventory-quality risk to strengthen its verification narrative."
+    if _is_mmp_company(company) and _has_terms(text, "web", "mobile", "attribution"):
+        return f"{company} is expanding the attribution narrative from app-only measurement to full web-to-app performance proof."
+    if _has_terms(text, "agentic", "creative") and ("Bedrock" in company or "Advertible" in company):
+        return "Bedrock and Advertible are framing AI as an operational loop, not just a creative generator."
+    if _has_terms(text, "ctv", "fraud") and ("DoubleVerify" in company or "DV" in text):
+        return "DoubleVerify is using CTV fraud research to strengthen the verification narrative."
+    if _has_terms(text, "fraud", "benchmark"):
+        return f"{company} is turning fraud and traffic-quality benchmarks into a sales narrative."
+    if _has_terms(text, "creator marketplace"):
+        return f"{company} is positioning creator-led CTV inventory as a new programmatic supply story."
+    if _has_terms(text, "cortex") or _has_terms(text, "axon"):
+        return f"{company} is pushing AI-led optimization as the core mobile growth narrative."
+    if _has_terms(text, "applovin", "integration") or _has_terms(text, "partner", "integration"):
+        return f"{company} is using partner integrations to make its growth stack look more connected."
+    if _has_terms(text, "acquisition", "adcolony"):
+        return f"{company} is using adtech asset consolidation to strengthen its platform story."
+    signal_type = signal.get("signal_type")
+    if signal_type == "product_launch":
+        return f"{company} is using a product launch to claim more of the growth workflow."
+    if signal_type == "partnership_integration":
+        if effective_category == "AI / Automation / Agentic UA":
+            return f"{company} is positioning integrations as the connective tissue for AI campaign workflows."
+        if effective_category == "Measurement / MMP / Attribution":
+            return f"{company} is using integrations to own more of the attribution and audience workflow."
+        return f"{company} is using partnerships to expand its platform narrative."
+    if signal_type == "market_report":
+        return f"{company} is using market benchmarks to support its sales and positioning story."
+    if signal_type == "funding_mna":
+        return f"{company} is using a market-structure move to reinforce its platform credibility."
+    return f"{company} is testing a market narrative worth monitoring."
+
+
+def _brief_why_it_matters(signal: dict[str, Any], index: int = 1) -> str:
+    category = _effective_brief_category(signal)
+    text = _signal_search_text(signal)
+    if _is_mmp_company(_signal_company_subject(signal)) and _has_terms(text, "web", "mobile", "attribution"):
+        return "MMPs are moving beyond app-only attribution and trying to own the full web-to-app journey."
+    if _has_terms(text, "ctv", "fraud"):
+        return "As CTV grows, advertisers will need stronger fraud protection and inventory validation."
+    if category == "AI / Automation / Agentic UA":
+        variants = (
+            "AI is moving from standalone tools to workflows that help teams decide, test, and optimize campaigns.",
+            "Growth teams are starting to expect AI tools to connect creative decisions with budget and performance feedback.",
+            "Agentic campaign tools are becoming a positioning battleground for mobile UA and performance media.",
+        )
+        return variants[(index - 1) % len(variants)]
+    if category == "Measurement / MMP / Attribution":
+        return "Advertisers need clearer proof of lift, payback, and performance across channels."
+    if category == "Traffic Quality / Fraud / Inventory":
+        return "Budget protection depends on cleaner supply, better fraud checks, and stronger traffic validation."
+    if category == "Competitor / Partner Moves":
+        return "Partner moves can create timely outreach hooks and clearer counter-positioning."
+    return _one_sentence(signal.get("why_it_matters") or "It creates a practical marketing and BD signal for BidMatrix.")
+
+
+def _brief_possible_action(signal: dict[str, Any], index: int = 1) -> str:
+    category = _effective_brief_category(signal)
+    text = _signal_search_text(signal)
+    company = _signal_company_subject(signal)
+    if _is_mmp_company(company) and _has_terms(text, "web", "mobile", "attribution"):
+        return 'LinkedIn post idea — "Why web-to-app measurement is becoming a key part of mobile growth."'
+    if _has_terms(text, "ctv", "fraud") or category == "Traffic Quality / Fraud / Inventory":
+        variants = (
+            "Website idea — strengthen BidMatrix messaging around traffic quality, anti-fraud protection, and budget safety.",
+            'BD talking point — "How are you validating inventory quality before scaling CTV or in-app budgets?"',
+        )
+        return variants[(index - 1) % len(variants)]
+    if category == "AI / Automation / Agentic UA":
+        variants = (
+            'BD talking point — "Can your current UA setup connect creative performance with budget decisions automatically?"',
+            "LinkedIn post idea — explain why AI buying needs closed-loop performance proof, not just faster asset generation.",
+            "Partner outreach idea — ask creative or measurement partners where AI workflow data should connect back to UA decisions.",
+        )
+        return variants[(index - 1) % len(variants)]
+    if category == "Measurement / MMP / Attribution":
+        return 'BD talking point — "Can your attribution setup prove lift across web, app, and partner channels?"'
+    if category == "Competitor / Partner Moves":
+        return "Partner outreach idea — use this move as a timely reason to ask how the partner stack is changing."
+    return "LinkedIn post idea — turn this signal into a short practical take for app growth teams."
+
+
+def _marketing_insight(signal: dict[str, Any], index: int = 1) -> str:
+    category = _effective_brief_category(signal)
+    company = _signal_company_subject(signal)
+    text = _signal_search_text(signal)
+    if _is_mmp_company(company) and _has_terms(text, "web", "mobile", "attribution"):
+        return "MMPs are trying to own more of the growth stack by connecting web, app, and ROAS proof in one story."
+    if _has_terms(text, "ctv", "fraud") or category == "Traffic Quality / Fraud / Inventory":
+        return "Verification companies are turning fraud risk into a sales argument for stronger traffic validation."
+    if _has_terms(text, "agentic", "creative") and ("Bedrock" in company or "Advertible" in company):
+        return "The market is moving from “AI makes ads” to “AI helps decide what to test, where to spend, and how to optimize.”"
+    if category == "AI / Automation / Agentic UA":
+        variants = (
+            "AI vendors are trying to own the campaign-operations layer, not just the automation layer.",
+            "Creative and media workflows are being packaged as one optimization story.",
+            "Agentic UA is becoming a positioning shortcut for control, speed, and measurable performance.",
+        )
+        return variants[(index - 1) % len(variants)]
+    if category == "Measurement / MMP / Attribution":
+        return "Measurement companies are using proof, incrementality, and full-funnel attribution to claim more strategic budget influence."
+    if category == "Competitor / Partner Moves":
+        return "Partner moves are becoming narrative signals: companies want to look more connected, scalable, and ecosystem-friendly."
+    return "This signal shows a company trying to turn a product or report into a clearer market position."
+
+
+def _bidmatrix_use(signal: dict[str, Any]) -> str:
+    category = _effective_brief_category(signal)
+    company = _signal_company_subject(signal)
+    text = _signal_search_text(signal)
+    if _is_mmp_company(company) and _has_terms(text, "web", "mobile", "attribution"):
+        return "BidMatrix can connect this to transparent performance, ROAS clarity, and measurable user quality."
+    if _has_terms(text, "ctv", "fraud") or category == "Traffic Quality / Fraud / Inventory":
+        return "BidMatrix can reinforce anti-fraud, verified traffic, and budget-protection messaging for CTV and in-app inventory."
+    if _has_terms(text, "agentic", "creative") and ("Bedrock" in company or "Advertible" in company):
+        return "BidMatrix should describe AI as part of real UA workflows: creative testing, budget control, traffic quality, and campaign optimization."
+    if category == "AI / Automation / Agentic UA":
+        return "BidMatrix can frame AI around measurable optimization loops, not generic automation claims."
+    if category == "Measurement / MMP / Attribution":
+        return "BidMatrix can use this to talk about partner-neutral measurement, performance proof, and quality-aware ROAS."
+    if category == "Competitor / Partner Moves":
+        return "BidMatrix can use this as a counter-positioning or partner-outreach hook."
+    return "BidMatrix can turn this into a short positioning note for marketing and BD."
+
+
+def _content_bd_idea(signal: dict[str, Any], index: int = 1) -> str:
+    category = _effective_brief_category(signal)
+    company = _signal_company_subject(signal)
+    text = _signal_search_text(signal)
+    if _is_mmp_company(company) and _has_terms(text, "web", "mobile", "attribution"):
+        return "LinkedIn post: “Why mobile growth is moving from app attribution to full-funnel performance proof.”"
+    if _has_terms(text, "ctv", "fraud") or category == "Traffic Quality / Fraud / Inventory":
+        return "Website idea: add stronger language around budget protection, verified supply, and fraud-resistant growth."
+    if _has_terms(text, "agentic", "creative") and ("Bedrock" in company or "Advertible" in company):
+        return "BD talking point: “Is your creative performance data connected to your media-buying decisions?”"
+    if category == "AI / Automation / Agentic UA":
+        variants = (
+            "BD talking point: “Where does AI actually improve your UA workflow today: creative, bids, budget, or quality control?”",
+            "LinkedIn post: “AI in mobile growth only matters when it changes optimization decisions.”",
+            "Partner outreach: ask creative and measurement partners where workflow data should feed media-buying decisions.",
+        )
+        return variants[(index - 1) % len(variants)]
+    if category == "Measurement / MMP / Attribution":
+        return "BD talking point: “Can your current stack prove performance across web, app, ROAS, and user quality?”"
+    if category == "Competitor / Partner Moves":
+        return "Counter-positioning angle: show where BidMatrix offers a clearer or more transparent path."
+    return "LinkedIn post: turn this into a short practical lesson for app growth teams."
+
+
+def _brief_watchlist_sentence(signal: dict[str, Any]) -> str:
+    company = _signal_company_subject(signal)
+    text = _signal_search_text(signal)
+    if _has_terms(text, "agentic", "buying"):
+        return f"{company} is building agentic mobile UA buying tools."
+    if _has_terms(text, "axon") or _has_terms(text, "ai-led", "growth"):
+        return f"{company} continues to push AI-led growth narratives."
+    if _has_terms(text, "rtb fabric") or _has_terms(text, "ml", "dsp"):
+        return f"{company} is positioning around ML-powered DSP infrastructure."
+    if signal.get("category") == "Measurement / MMP / Attribution":
+        return f"{company} is worth watching for measurement and attribution positioning."
+    if signal.get("category") == "Traffic Quality / Fraud / Inventory":
+        return f"{company} is worth watching for traffic-quality and fraud signals."
+    return f"{company} is worth watching for a clearer BidMatrix-relevant move."
+
+
+def _effective_brief_category(signal: dict[str, Any]) -> str:
+    company = _signal_company_subject(signal)
+    text = _signal_search_text(signal).lower()
+    if _is_quality_company(company) or _has_any(text, ("fraud", "ivt", "invalid traffic", "traffic quality", "inventory validation")):
+        return "Traffic Quality / Fraud / Inventory"
+    return str(signal.get("category") or "")
+
+
+def _is_mmp_company(company: str) -> bool:
+    return company.lower() in {name.lower() for name in MMP_COMPANY_NAMES}
+
+
+def _is_quality_company(company: str) -> bool:
+    return company.lower() in {name.lower() for name in QUALITY_COMPANY_NAMES}
+
+
+def _signal_company_subject(signal: dict[str, Any]) -> str:
+    text = _signal_search_text(signal)
+    matches = [name for name in KNOWN_COMPANY_NAMES if re.search(rf"\b{re.escape(name)}\b", text, flags=re.IGNORECASE)]
+    if "Bedrock" in matches and "Advertible" in matches:
+        return "Bedrock and Advertible"
+    if "Affle" in matches and "AdColony" in matches:
+        return "Affle"
+    if matches:
+        return matches[0]
+    source = str(signal.get("source") or "").strip()
+    if source and not _looks_like_publisher_or_author(source):
+        return source
+    return _clean_company_from_title(str(signal.get("title") or "A company"))
+
+
+def _signal_search_text(signal: dict[str, Any]) -> str:
+    return " ".join(
+        str(signal.get(key) or "")
+        for key in ("title", "source", "source_domain", "what_happened", "why_it_matters", "bidmatrix_angle", "suggested_action")
+    )
+
+
+def _has_terms(text: str, *terms: str) -> bool:
+    lower_text = text.lower()
+    return all(term.lower() in lower_text for term in terms)
+
+
+def _looks_like_publisher_or_author(source: str) -> bool:
+    lower_source = source.lower()
+    if " " in source and not any(name.lower() in lower_source for name in KNOWN_COMPANY_NAMES):
+        return True
+    return any(
+        marker in lower_source
+        for marker in (
+            "wire",
+            "news",
+            "pressbox",
+            "morningstar",
+            "businesswire",
+            "globenewswire",
+            "ppc.land",
+            "exchange",
+            "adexchanger",
+        )
+    )
+
+
+def _clean_company_from_title(title: str) -> str:
+    cleaned = re.split(r"\s[-|]\s", title, maxsplit=1)[0]
+    cleaned = re.sub(r"^(global study|report|study):\s*", "", cleaned, flags=re.IGNORECASE)
+    words = cleaned.split()
+    return " ".join(words[:3]) if words else "A company"
+
+
+def _one_sentence(text: str) -> str:
+    sentence = re.split(r"(?<=[.!?])\s+", str(text).strip(), maxsplit=1)[0]
+    return sentence.rstrip(".") + "."
 
 
 def _sections(signals: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
@@ -527,28 +872,108 @@ def _sections(signals: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     return {heading: [item for item in signals if item["category"] == heading] for heading in headings}
 
 
-def _executive_summary(signals: list[dict[str, Any]]) -> list[str]:
+def _executive_summary(signals: list[dict[str, Any]]) -> dict[str, str]:
     if not signals:
-        return []
-    summaries: list[str] = []
+        return {}
     category_counts: dict[str, int] = {}
     for signal in signals:
         category_counts[signal["category"]] = category_counts.get(signal["category"], 0) + 1
     top_categories = sorted(category_counts.items(), key=lambda item: (-item[1], item[0]))[:3]
     top_category, top_count = top_categories[0]
+    lead_signals = ", ".join(_plain_signal_theme(signal) for signal in signals[:3])
     if top_count / len(signals) >= 0.6:
-        summaries.append(
-            f"This run is concentrated around {top_category}: {top_count} of {len(signals)} kept signals sit in that theme."
+        coverage_note = (
+            f"This run is {_category_short_label(top_category)}-heavy: "
+            f"{top_count} of {len(signals)} kept signals sit in that theme. Thin categories are not being force-filled."
         )
     else:
-        summaries.append(
-            "Strongest signals cluster around "
+        coverage_note = (
+            "Strongest signals are spread across "
             + ", ".join(category for category, _count in top_categories)
-            + "."
+            + "; categories with no strong items are left empty."
         )
-    for signal in signals[:3]:
-        summaries.append(f"{signal['title']}: {signal['bidmatrix_angle']}")
-    return summaries[:5]
+    return {
+        "what_changed": f"{lead_signals} are the strongest public signals in this preview run.",
+        "why_it_matters": _summary_why_it_matters(signals, top_category),
+        "what_bidmatrix_should_do": _summary_recommendation(signals, top_category),
+        "coverage_note": coverage_note,
+    }
+
+
+def _so_what(signals: list[dict[str, Any]]) -> list[str]:
+    bullets: list[str] = []
+    categories = {signal["category"] for signal in signals}
+    if "AI / Automation / Agentic UA" in categories:
+        bullets.append(
+            "AI buying and creative automation are becoming table stakes; BidMatrix should frame its AI story around measurable optimization loops, not generic automation."
+        )
+    if "Measurement / MMP / Attribution" in categories:
+        bullets.append(
+            "Measurement players are pushing web-to-app, incrementality, and partner-neutral proof; BidMatrix can connect this to transparent performance and ROAS/LTV clarity."
+        )
+    if "Traffic Quality / Fraud / Inventory" in categories:
+        bullets.append(
+            "Fraud and inventory-quality signals should feed BidMatrix's verified-supply, anti-fraud, and budget-protection positioning."
+        )
+    if "Competitor / Partner Moves" in categories:
+        bullets.append(
+            "Competitor and partner moves are useful outreach triggers; BD can reference them as timely context rather than cold generic check-ins."
+        )
+    return bullets[:4]
+
+
+def _summary_why_it_matters(signals: list[dict[str, Any]], top_category: str) -> str:
+    if top_category == "AI / Automation / Agentic UA":
+        return (
+            "The market is moving from point automation toward agentic campaign operations, creative testing, and optimization loops that buyers will expect to connect to measurable performance."
+        )
+    if top_category == "Measurement / MMP / Attribution":
+        return (
+            "Measurement vendors are competing on proof quality, cross-channel attribution, and incrementality, which raises buyer expectations for transparent performance evidence."
+        )
+    if top_category == "Traffic Quality / Fraud / Inventory":
+        return (
+            "Advertisers are treating verified supply, fraud resistance, and CTV/in-app quality as budget-protection requirements rather than back-office checks."
+        )
+    if top_category == "Competitor / Partner Moves":
+        return (
+            "Partner and competitor moves create practical hooks for BD outreach, counter-positioning, and ecosystem monitoring."
+        )
+    return f"{len(signals)} kept signals point to a focused market shift that BidMatrix can use for marketing and BD."
+
+
+def _summary_recommendation(signals: list[dict[str, Any]], top_category: str) -> str:
+    if top_category == "AI / Automation / Agentic UA":
+        return (
+            "Package BidMatrix's AI narrative around measurable UA workflows: campaign ops, creative testing, budget control, and optimization proof."
+        )
+    if top_category == "Measurement / MMP / Attribution":
+        return (
+            "Tie product messaging to partner-neutral attribution, web-to-app measurement, incrementality, and ROAS/LTV clarity."
+        )
+    if top_category == "Traffic Quality / Fraud / Inventory":
+        return (
+            "Use these signals to sharpen verified traffic, anti-fraud, inventory-quality, and CTV/in-app validation positioning."
+        )
+    if top_category == "Competitor / Partner Moves":
+        return (
+            "Turn the strongest move into a BD trigger: who changed, what it signals, and how BidMatrix can offer an alternative or complementary path."
+        )
+    return "Use the strongest signal as a concise internal talking point and test one content/BD angle before expanding the theme."
+
+
+def _plain_signal_theme(signal: dict[str, Any]) -> str:
+    title = str(signal.get("title") or "").split(" | ", 1)[0].split(" - ", 1)[0]
+    return title.strip() or str(signal.get("source_domain") or "market signal")
+
+
+def _category_short_label(category: str) -> str:
+    return {
+        "AI / Automation / Agentic UA": "AI/agentic",
+        "Measurement / MMP / Attribution": "measurement",
+        "Traffic Quality / Fraud / Inventory": "traffic-quality",
+        "Competitor / Partner Moves": "competitor/partner",
+    }.get(category, category.lower())
 
 
 def _recommended_actions(signals: list[dict[str, Any]]) -> list[str]:
@@ -556,13 +981,66 @@ def _recommended_actions(signals: list[dict[str, Any]]) -> list[str]:
     if not signals:
         return actions
     first = signals[0]
-    actions.append(f"LinkedIn post idea: turn '{first['title']}' into a short take on {first['category'].lower()}.")
-    actions.append(f"BD talking point: {first['suggested_action']}")
-    for signal in signals[1:3]:
-        actions.append(f"Partner outreach idea: use {signal['source_domain']} signal as context for a targeted check-in.")
-    if any(item["category"] == "Measurement / MMP / Attribution" for item in signals):
-        actions.append("Website/positioning idea: add sharper proof points around measurement, incrementality, and partner-neutral optimization.")
+    actions.append(f"LinkedIn post idea: { _linkedin_post_idea(first) }")
+    actions.append(f"BD talking point: { _bd_talking_point(first) }")
+    outreach_signal = _first_signal_in_category(signals, "Competitor / Partner Moves") or signals[min(1, len(signals) - 1)]
+    actions.append(f"Partner outreach idea: { _partner_outreach_idea(outreach_signal) }")
+    positioning_signal = _first_signal_in_category(signals, "Measurement / MMP / Attribution") or first
+    actions.append(f"Website/positioning idea: { _website_positioning_idea(positioning_signal) }")
     return actions[:5]
+
+
+def _first_signal_in_category(signals: list[dict[str, Any]], category: str) -> dict[str, Any] | None:
+    return next((signal for signal in signals if signal["category"] == category), None)
+
+
+def _linkedin_post_idea(signal: dict[str, Any]) -> str:
+    category = signal["category"]
+    if category == "AI / Automation / Agentic UA":
+        return "publish a short take on why agentic UA needs measurable optimization loops, not just another automation claim."
+    if category == "Measurement / MMP / Attribution":
+        return "explain why web-to-app and incrementality proof matter when performance teams compare partner-neutral attribution options."
+    if category == "Traffic Quality / Fraud / Inventory":
+        return "turn the signal into a practical post on protecting UA budgets with verified supply and quality traffic checks."
+    if category == "Competitor / Partner Moves":
+        return f"use {signal.get('source_domain') or 'this source'} as a timely hook for what the partner ecosystem is telling advertisers."
+    return f"turn {_plain_signal_theme(signal)} into a concise market note for app growth teams."
+
+
+def _bd_talking_point(signal: dict[str, Any]) -> str:
+    category = signal["category"]
+    if category == "AI / Automation / Agentic UA":
+        return "ask prospects how they measure AI-driven campaign changes across bidding, creative testing, and budget allocation."
+    if category == "Measurement / MMP / Attribution":
+        return "ask whether their current stack can connect web-to-app journeys, incrementality, and ROAS/LTV proof without platform bias."
+    if category == "Traffic Quality / Fraud / Inventory":
+        return "ask how they verify CTV/in-app supply quality before scaling budgets, and where fraud checks enter optimization."
+    if category == "Competitor / Partner Moves":
+        return "use the move as a reason to compare BidMatrix's position against the prospect's current partner mix."
+    return signal["suggested_action"]
+
+
+def _partner_outreach_idea(signal: dict[str, Any]) -> str:
+    source = signal.get("source_domain") or "the source"
+    if signal["category"] == "Measurement / MMP / Attribution":
+        return f"use {source} to start a partner conversation around attribution proof, incrementality, and shared reporting gaps."
+    if signal["category"] == "AI / Automation / Agentic UA":
+        return f"use {source} to ask partners where AI-assisted bidding or creative workflows need clearer measurement hooks."
+    if signal["category"] == "Traffic Quality / Fraud / Inventory":
+        return f"use {source} to ask supply or verification partners how they prove quality before budget scaling."
+    return f"use {source} as a warm context point for a focused ecosystem check-in."
+
+
+def _website_positioning_idea(signal: dict[str, Any]) -> str:
+    if signal["category"] == "Measurement / MMP / Attribution":
+        return "add a proof point around partner-neutral attribution, web-to-app visibility, and ROAS/LTV clarity."
+    if signal["category"] == "AI / Automation / Agentic UA":
+        return "tighten AI copy around measurable optimization workflows: bidding, creative testing, controls, and outcomes."
+    if signal["category"] == "Traffic Quality / Fraud / Inventory":
+        return "make verified traffic, fraud-aware optimization, and inventory validation more visible in programmatic/CTV messaging."
+    if signal["category"] == "Competitor / Partner Moves":
+        return "add a comparison-friendly line that clarifies where BidMatrix fits in the partner ecosystem."
+    return "turn the strongest signal into one concrete proof point on the website."
 
 
 def _dedupe_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -591,6 +1069,204 @@ def _dedupe_related_signals(signals: list[dict[str, Any]]) -> list[dict[str, Any
         output.append(_with_source_fields(primary, secondary))
 
     return sorted(output, key=_rank_key)
+
+
+def _apply_compact_markdown_quality_gate(signals: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    output: list[dict[str, Any]] = []
+    for signal in signals:
+        item = dict(signal)
+        if item.get("kept") and _is_awkward_action_sentence(_brief_signal_sentence(item)):
+            item["kept"] = False
+            item["watchlist"] = True
+            item["keep_reason"] = None
+            item["skip_reason"] = "awkward_action_sentence"
+        if (item.get("kept") or item.get("watchlist")) and _has_malformed_rendered_subject(item):
+            item["kept"] = False
+            item["watchlist"] = False
+            item["keep_reason"] = None
+            item["skip_reason"] = "malformed_subject"
+        output.append(item)
+    return output
+
+
+def _dedupe_brief_top_signals(signals: list[dict[str, Any]], *, limit: int | None = None) -> tuple[list[dict[str, Any]], set[str]]:
+    seen_keys: set[str] = set()
+    seen_sentences: set[str] = set()
+    output: list[dict[str, Any]] = []
+    duplicate_urls: set[str] = set()
+    for signal in signals:
+        keys = _brief_signal_keys(signal)
+        sentence = _normalize_text(_brief_signal_sentence(signal))
+        duplicate = bool(keys & seen_keys) or sentence in seen_sentences
+        if duplicate or (limit is not None and len(output) >= limit):
+            duplicate_urls.add(str(signal.get("url") or ""))
+            continue
+        seen_keys.update(keys)
+        seen_sentences.add(sentence)
+        output.append(signal)
+    return output, duplicate_urls
+
+
+def _mark_duplicate_top_signals(signals: list[dict[str, Any]], duplicate_urls: set[str]) -> list[dict[str, Any]]:
+    if not duplicate_urls:
+        return signals
+    output: list[dict[str, Any]] = []
+    for signal in signals:
+        item = dict(signal)
+        if str(item.get("url") or "") in duplicate_urls:
+            item["kept"] = False
+            item["watchlist"] = False
+            item["keep_reason"] = None
+            item["skip_reason"] = "duplicate_top_signal"
+        output.append(item)
+    return output
+
+
+def _dedupe_watchlist_items(signals: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    items, _duplicate_urls = _dedupe_watchlist_items_with_duplicate_urls(signals)
+    return items
+
+
+def _dedupe_watchlist_items_with_duplicate_urls(
+    signals: list[dict[str, Any]],
+    *,
+    limit: int | None = None,
+) -> tuple[list[dict[str, Any]], set[str]]:
+    seen_keys: set[str] = set()
+    seen_bullets: set[str] = set()
+    output: list[dict[str, Any]] = []
+    duplicate_urls: set[str] = set()
+    for signal in signals:
+        keys = _brief_watchlist_keys(signal)
+        bullet = _normalize_text(_brief_watchlist_sentence(signal))
+        duplicate = bool(keys & seen_keys) or bullet in seen_bullets
+        if duplicate or (limit is not None and len(output) >= limit):
+            duplicate_urls.add(str(signal.get("url") or ""))
+            continue
+        seen_keys.update(keys)
+        seen_bullets.add(bullet)
+        output.append(signal)
+    return output, duplicate_urls
+
+
+def _mark_duplicate_watchlist_items(signals: list[dict[str, Any]], duplicate_urls: set[str]) -> list[dict[str, Any]]:
+    if not duplicate_urls:
+        return signals
+    output: list[dict[str, Any]] = []
+    for signal in signals:
+        item = dict(signal)
+        if str(item.get("url") or "") in duplicate_urls:
+            item["kept"] = False
+            item["watchlist"] = False
+            item["keep_reason"] = None
+            item["skip_reason"] = "duplicate_watchlist_item"
+        output.append(item)
+    return output
+
+
+def _brief_signal_key(signal: dict[str, Any]) -> str:
+    return next(iter(sorted(_brief_signal_keys(signal))))
+
+
+def _brief_signal_keys(signal: dict[str, Any]) -> set[str]:
+    company = _normalize_text(_signal_company_subject(signal))
+    signal_type = _normalize_text(signal.get("signal_type"))
+    theme = _brief_theme_key(signal)
+    keys = {f"{company}:{signal_type}:{theme}"}
+    if theme == "market_structure":
+        keys.add(f"{company}:{theme}")
+    return keys
+
+
+def _brief_watchlist_key(signal: dict[str, Any]) -> str:
+    return next(iter(sorted(_brief_watchlist_keys(signal))))
+
+
+def _brief_watchlist_keys(signal: dict[str, Any]) -> set[str]:
+    company = _normalize_text(_signal_company_subject(signal))
+    theme = _brief_theme_key(signal)
+    bullet = _normalize_text(_brief_watchlist_sentence(signal))
+    return {f"{company}:{theme}", f"bullet:{bullet}"}
+
+
+def _brief_theme_key(signal: dict[str, Any]) -> str:
+    text = _signal_search_text(signal).lower()
+    if _has_any(text, ("ipo", "funding", "raises", "raised", "acquisition", "acquires", "acquired", "market-structure", "market structure")):
+        return "market_structure"
+    if _has_terms(text, "web", "mobile", "attribution"):
+        return "web_mobile_attribution"
+    if _has_any(text, ("fraud", "ivt", "invalid traffic", "traffic quality")):
+        return "traffic_quality_fraud"
+    if _has_any(text, ("agentic", "creative", "axon", "cortex", "mcp")):
+        return "ai_campaign_ops"
+    if _has_any(text, ("partner", "integration", "integrates", "connected")):
+        return "partner_integration"
+    return _normalize_text(str(signal.get("title") or ""))[:80]
+
+
+def _is_awkward_action_sentence(sentence: str) -> bool:
+    lowered = sentence.lower()
+    awkward_patterns = (
+        "launches launched",
+        "launched launched",
+        "merges brand connected",
+        "launches mcp connected",
+        "connected connected",
+        "connected two parts of the growth stack",
+    )
+    return any(pattern in lowered for pattern in awkward_patterns)
+
+
+def _has_malformed_rendered_subject(signal: dict[str, Any]) -> bool:
+    subject = _rendered_subject(signal)
+    if not subject:
+        return True
+    if _is_known_rendered_subject(subject):
+        return False
+    normalized = _normalize_text(subject)
+    if normalized in {
+        "ad techs next",
+        "ad tech next",
+        "agentic ad tech the",
+        "agentic adtech the",
+        "retail medias hidden",
+        "retail media hidden",
+        "the",
+        "a",
+    }:
+        return True
+    if re.match(r"^(retail media|ad tech|agentic ad-tech|agentic adtech|the|a|how|why|what)\b", subject, flags=re.IGNORECASE):
+        return True
+    if ":" in subject:
+        return True
+    if re.search(r"\b(releases|launches|announces|introduces|expands|rolls out|unveils)\b", subject, flags=re.IGNORECASE):
+        return True
+    if re.search(r"(?:'s|’s)\s+\w+", subject):
+        return True
+    if re.search(r"\b(ad|ads|first-party|hidden|next|report|study|market|media|performance)$", subject, flags=re.IGNORECASE):
+        return True
+    if len(subject.split()) > 4 and not any(name.lower() in subject.lower() for name in KNOWN_COMPANY_NAMES):
+        return True
+    return False
+
+
+def _is_known_rendered_subject(subject: str) -> bool:
+    normalized_subject = _normalize_text(subject)
+    return any(normalized_subject == _normalize_text(name) for name in KNOWN_COMPANY_NAMES)
+
+
+def _rendered_subject(signal: dict[str, Any]) -> str:
+    sentence = _brief_signal_sentence(signal)
+    match = re.match(
+        r"(.+?)\s+(?:is|are)\s+(?:expanding|framing|using|building|positioning|pushing|turning|testing|exploring|trying)\b",
+        sentence,
+    )
+    if match:
+        return match.group(1).strip()
+    match = re.match(r"(.+?)\s+(?:connected|published|highlighted|shared|announced|introduced|launched|updated|added|made)\b", sentence)
+    if match:
+        return match.group(1).strip()
+    return sentence.split(" is ", 1)[0].strip()
 
 
 def _with_source_fields(primary: dict[str, Any], secondary: list[dict[str, Any]]) -> dict[str, Any]:
@@ -795,11 +1471,32 @@ def _keep_reason(signal_type: str) -> str:
 
 
 def _fallback_angle(item: dict[str, Any]) -> str:
-    return f"This gives BidMatrix a timely angle on {item['category'].lower()} for marketing and BD conversations."
+    category = item["category"]
+    signal_type = item["signal_type"]
+    if category == "AI / Automation / Agentic UA":
+        if signal_type == "partnership_integration":
+            return "This points to agentic campaign workflows becoming integrated across buying and creative stacks, giving BidMatrix a sharper AI operations positioning hook."
+        return "This gives BidMatrix a way to frame AI around measurable UA optimization, creative testing, and campaign-control loops."
+    if category == "Measurement / MMP / Attribution":
+        return "This supports BidMatrix messaging around partner-neutral measurement proof, web-to-app visibility, incrementality, and ROAS/LTV clarity."
+    if category == "Traffic Quality / Fraud / Inventory":
+        return "This reinforces BidMatrix positioning around verified supply, fraud-aware optimization, quality traffic, and budget protection."
+    if category == "Competitor / Partner Moves":
+        return "This creates a counter-positioning and BD outreach trigger around how the partner ecosystem is shifting."
+    return f"This gives BidMatrix a concrete marketing and BD angle on {category.lower()}."
 
 
 def _fallback_action(item: dict[str, Any]) -> str:
-    return f"Use this as a short internal talking point for {item['category'].lower()} outreach."
+    category = item["category"]
+    if category == "AI / Automation / Agentic UA":
+        return "Use this to start a sales conversation about how prospects measure AI-driven bidding, creative testing, and optimization changes."
+    if category == "Measurement / MMP / Attribution":
+        return "Use this as a BD prompt about attribution proof, incrementality, web-to-app measurement, and ROAS/LTV reporting gaps."
+    if category == "Traffic Quality / Fraud / Inventory":
+        return "Use this as a buyer-facing prompt about verified traffic, fraud checks, CTV/in-app validation, and budget protection."
+    if category == "Competitor / Partner Moves":
+        return "Use this as a partner or competitor-monitoring hook for a targeted outreach note."
+    return f"Use this as a short internal talking point for {category.lower()} outreach."
 
 
 def _why_it_matters_from_text(text: str, category: str) -> str:
