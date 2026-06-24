@@ -10,6 +10,7 @@ from .delivery import DeliveryError, maybe_deliver_report
 from .intelligence import build_report
 from .linkedin_watch import build_linkedin_watch_preview
 from .market_brief_v2 import build_market_brief_v2_preview
+from .marketing_insights_radar import build_marketing_insights_radar_preview
 from .render import write_report
 from .weekly import build_weekly_digest, write_weekly_digest
 
@@ -37,6 +38,22 @@ def main() -> None:
         type=int,
         default=None,
         help="Optional max companies to check for the competitor radar preview.",
+    )
+    parser.add_argument(
+        "--marketing-insights-radar-preview",
+        action="store_true",
+        help="Build a preview-only Marketing Insights Radar report from the company source list.",
+    )
+    parser.add_argument(
+        "--marketing-insights-radar-config",
+        default="config/marketing_insights_radar_sources.json",
+        help="Path to Marketing Insights Radar sources config.",
+    )
+    parser.add_argument(
+        "--marketing-insights-radar-max-companies",
+        type=int,
+        default=None,
+        help="Optional max companies to check for the Marketing Insights Radar preview.",
     )
     parser.add_argument(
         "--linkedin-watch-preview",
@@ -86,6 +103,24 @@ def main() -> None:
             f"companies_with_useful_signals={payload['companies_with_useful_signals']} "
             f"exa_total_queries={payload['exa_total_queries']} "
             f"exa_errors_count={payload['exa_errors_count']}"
+        )
+        return
+
+    if args.marketing_insights_radar_preview:
+        markdown_path, json_path, payload = build_marketing_insights_radar_preview(
+            args.marketing_insights_radar_config,
+            max_companies=args.marketing_insights_radar_max_companies,
+        )
+        print(f"Wrote {markdown_path}")
+        print(f"Wrote {json_path}")
+        print(
+            "MARKETING_INSIGHTS_RADAR_PREVIEW "
+            f"companies_checked={payload['companies_checked']} "
+            f"kept_signals={payload['companies_with_useful_signals']} "
+            f"watchlist_signals={payload['watchlist_signals_count']} "
+            f"exa_total_queries={payload['exa_total_queries']} "
+            f"exa_errors_count={payload['exa_errors_count']} "
+            f"exa_timeouts_count={payload['exa_timeouts_count']}"
         )
         return
 
