@@ -83,7 +83,7 @@ def maybe_deliver_marketing_insights_report(config: MonitorConfig, markdown_path
     try:
         if channel != "telegram":
             raise RuntimeError(f"Unsupported Marketing Insights Radar delivery channel: {channel}")
-        _send_marketing_insights_telegram(markdown_path.read_text(encoding="utf-8"), run_date)
+        _send_marketing_insights_telegram(markdown_path, run_date)
     except Exception as exc:
         print(
             "MARKETING_INSIGHTS_DELIVERY_FAILED "
@@ -186,13 +186,13 @@ def _send_telegram(subject: str, text: str, report_type: str) -> str:
     return "sent"
 
 
-def _send_marketing_insights_telegram(text: str, run_date: date) -> None:
+def _send_marketing_insights_telegram(markdown_path: Path, run_date: date) -> None:
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
     if not token or not chat_id:
         raise RuntimeError("Telegram delivery requires TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.")
 
-    _post_telegram_message(token, chat_id, _marketing_insights_telegram_message(text, run_date))
+    _post_telegram_message(token, chat_id, _marketing_insights_telegram_message_from_report(markdown_path, run_date))
 
 
 def _post_telegram_message(token: str, chat_id: str, message: str) -> None:
@@ -299,6 +299,47 @@ def _telegram_message(subject: str, text: str, report_type: str) -> str:
     return _truncate_daily('\n'.join(lines), 3800)
 
 
+def _marketing_insights_telegram_message_from_report(markdown_path: Path, run_date: date) -> str:
+    text = markdown_path.read_text(encoding="utf-8")
+    payload = _marketing_insights_payload(markdown_path)
+    if payload:
+        return _marketing_insights_telegram_message_from_payload(payload, text, run_date)
+    return _marketing_insights_telegram_message(text, run_date)
+
+
+def _marketing_insights_telegram_message_from_payload(payload: dict, fallback_text: str, run_date: date) -> str:
+    moves = _marketing_moves_from_payload(payload)
+    watchlist = _marketing_move_watchlist_from_payload(payload)
+    pattern = _marketing_moves_pattern(moves) or _marketing_insights_pattern(fallback_text)
+    title = f"<b>Marketing Insights Radar — {html.escape(run_date.isoformat())}</b>"
+    lines = [title]
+
+    if pattern:
+        lines.extend(["", "<b>Today’s useful marketing moves</b>", html.escape(_shorten(pattern, 360))])
+
+    lines.extend(["", "<b>Marketing moves to check</b>"])
+    if moves:
+        for index, move in enumerate(moves[:5], start=1):
+            lines.append(f"{index}. {html.escape(_shorten(_marketing_move_headline(move), 220))}")
+            lines.append(f"Why it matters: {html.escape(_shorten(_marketing_move_why(move), 220))}")
+            lines.append(f"Use for BidMatrix: {html.escape(_shorten(_marketing_move_use(move, index), 220))}")
+            source = _marketing_move_source(move)
+            if source:
+                lines.append(f"Source: {html.escape(_shorten(source, 180))}")
+            lines.append("")
+    else:
+        lines.append("No concrete marketing moves passed the quality gate.")
+
+    if watchlist:
+        if lines[-1] != "":
+            lines.append("")
+        lines.append("<b>Watchlist</b>")
+        for item in watchlist[:3]:
+            lines.append(f"- {html.escape(_shorten(_marketing_move_watchlist_line(item), 160))}")
+
+    return _truncate("\n".join(lines).rstrip(), 3800)
+
+
 def _marketing_insights_telegram_message(text: str, run_date: date) -> str:
     pattern = _marketing_insights_pattern(text)
     items = _marketing_insights_items(text)
@@ -307,9 +348,9 @@ def _marketing_insights_telegram_message(text: str, run_date: date) -> str:
     lines = [title]
 
     if pattern:
-        lines.extend(["", "<b>Today’s marketing pattern</b>", html.escape(_shorten(pattern, 360))])
+        lines.extend(["", "<b>Today’s useful marketing moves</b>", html.escape(_shorten(pattern, 360))])
 
-    lines.extend(["", "<b>Company insights</b>"])
+    lines.extend(["", "<b>Marketing moves to check</b>"])
     if items:
         use_counts: dict[str, int] = {}
         for index, item in enumerate(items[:5], start=1):
@@ -317,10 +358,11 @@ def _marketing_insights_telegram_message(text: str, run_date: date) -> str:
             family = _marketing_insights_theme_family(item)
             family_index = use_counts.get(family, 0)
             use_counts[family] = family_index + 1
-            lines.append(f"Use: {html.escape(_shorten(_marketing_insights_use_line(item, family_index), 180))}")
+            lines.append(f"Why it matters: {html.escape(_shorten(item.get('marketing_insight') or 'This gives BidMatrix a concrete marketing example to study.', 220))}")
+            lines.append(f"Use for BidMatrix: {html.escape(_shorten(_marketing_insights_use_line(item, family_index), 180))}")
             lines.append("")
     else:
-        lines.append("No strong marketing insight signals passed the quality gate.")
+        lines.append("No concrete marketing moves passed the quality gate.")
 
     if watchlist:
         if lines[-1] != "":
@@ -330,6 +372,352 @@ def _marketing_insights_telegram_message(text: str, run_date: date) -> str:
             lines.append(f"- {html.escape(_shorten(_marketing_insights_watchlist_line(item), 160))}")
 
     return _truncate("\n".join(lines).rstrip(), 3800)
+
+
+def _marketing_insights_payload(markdown_path: Path) -> dict | None:
+    json_path = markdown_path.with_suffix(".json")
+    if not json_path.exists():
+        return None
+    try:
+        payload = json.loads(json_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _marketing_moves_from_payload(payload: dict) -> list[dict]:
+    moves: list[dict] = []
+    seen: set[str] = set()
+    for signal in payload.get("signals", []):
+        if not isinstance(signal, dict) or not signal.get("kept"):
+            continue
+        if not _has_visible_marketing_artifact(signal):
+            continue
+        key = _slug_delivery(f"{signal.get('company')} {_marketing_move_type(signal)} {signal.get('title')}")
+        if key in seen:
+            continue
+        seen.add(key)
+        moves.append(signal)
+        if len(moves) >= 5:
+            break
+    return moves
+
+
+def _marketing_move_watchlist_from_payload(payload: dict) -> list[dict]:
+    items: list[dict] = []
+    seen: set[str] = set()
+    for signal in payload.get("watchlist", []):
+        if not isinstance(signal, dict):
+            continue
+        company = _clean_delivery_company(signal.get("company") or "")
+        if not company:
+            continue
+        key = _slug_delivery(f"{company} {_marketing_move_type(signal)} {signal.get('title')}")
+        if key in seen:
+            continue
+        seen.add(key)
+        items.append(signal)
+        if len(items) >= 3:
+            break
+    return items
+
+
+def _marketing_moves_pattern(moves: list[dict]) -> str:
+    if not moves:
+        return ""
+    labels = [_marketing_move_type_label(_marketing_move_type(move)) for move in moves]
+    counts = {label: labels.count(label) for label in set(labels)}
+    leading = [label for label, _count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:3]]
+    if len(leading) == 1:
+        return f"Competitors are using {leading[0]} as reusable marketing proof; BidMatrix can study the format, source, and angle."
+    if len(leading) == 2:
+        return f"Competitors are using {leading[0]} and {leading[1]} as practical marketing assets BidMatrix can reuse or counter-position against."
+    return f"Competitors are using {', '.join(leading[:-1])}, and {leading[-1]} as practical marketing assets BidMatrix can reuse or counter-position against."
+
+
+def _marketing_move_headline(signal: dict) -> str:
+    company = _clean_delivery_company(signal.get("company") or "") or "Company"
+    move_type = _marketing_move_type(signal)
+    title = _clean_marketing_title(signal.get("title") or "")
+    source = _marketing_move_source(signal)
+    if move_type == "report":
+        artifact = title or "a market report"
+        return f"{company} — published {artifact}."
+    if move_type == "guide":
+        artifact = title or "a practical guide"
+        return f"{company} — published {artifact}."
+    if move_type == "playbook":
+        artifact = title or "a playbook"
+        return f"{company} — published {artifact}."
+    if move_type == "webinar":
+        artifact = title or "a webinar"
+        return f"{company} — promoted {artifact}."
+    if move_type == "podcast":
+        artifact = title or "a podcast or interview"
+        return f"{company} — appeared in {artifact}."
+    if move_type == "case_study":
+        artifact = title or "a customer case study"
+        return f"{company} — shared {artifact}."
+    if move_type == "partner_content":
+        partner = _partner_or_media_name(signal)
+        if partner:
+            return f"{company} — used partner content with {partner}."
+        return f"{company} — used a partner content angle."
+    if move_type == "media_placement":
+        if source:
+            return f"{company} — placed a marketing story in {source}."
+        return f"{company} — used an external media placement."
+    if move_type == "event_promo":
+        return f"{company} — promoted an event with a clear growth-market message."
+    if move_type == "resource_hub":
+        return f"{company} — used its resources hub to educate growth teams."
+    return f"{company} — turned a product or positioning update into a marketing asset."
+
+
+def _marketing_move_why(signal: dict) -> str:
+    move_type = _marketing_move_type(signal)
+    family = _marketing_insights_payload_theme(signal)
+    if move_type in {"report", "case_study"}:
+        return "It turns data or customer proof into sales enablement instead of a generic product claim."
+    if move_type in {"guide", "playbook", "resource_hub"}:
+        return "It educates buyers around a problem the company wants to own."
+    if move_type in {"webinar", "podcast", "partner_content"}:
+        return "It borrows audience and credibility from another channel or expert."
+    if move_type == "media_placement":
+        return "It uses outside media credibility to make the positioning feel less self-promotional."
+    if family == "traffic_quality":
+        return "It turns risk and quality proof into a clearer reason to protect media budgets."
+    if family == "measurement":
+        return "It makes measurement feel closer to budget decisions, not just reporting."
+    return "It shows a concrete way competitors package their narrative for marketers and buyers."
+
+
+def _marketing_move_use(signal: dict, index: int) -> str:
+    move_type = _marketing_move_type(signal)
+    family = _marketing_insights_payload_theme(signal)
+    if move_type in {"report", "case_study"}:
+        variants = (
+            "LinkedIn post — explain what proof app growth teams should demand before scaling spend.",
+            "Sales deck note — collect the proof format and adapt it for BidMatrix quality, ROAS, or fraud messaging.",
+        )
+        return variants[(index - 1) % len(variants)]
+    if move_type in {"guide", "playbook", "resource_hub"}:
+        variants = (
+            "LinkedIn post — turn the guide topic into a short checklist for app marketers.",
+            "Website idea — create a practical resource angle around traffic quality, ROAS proof, or full-funnel growth.",
+        )
+        return variants[(index - 1) % len(variants)]
+    if move_type in {"webinar", "podcast", "partner_content"}:
+        return "Partner outreach — pitch a similar collaboration around AI agents, traffic optimization, or measurement proof."
+    if move_type == "media_placement":
+        return "Counter-positioning — use the placement to spot which narrative BidMatrix should answer more directly."
+    if family == "traffic_quality":
+        return "Website message — connect BidMatrix to fraud protection, verified traffic, and budget safety."
+    if family == "measurement":
+        return "BD angle — ask clients whether their current stack proves quality, incrementality, and ROAS together."
+    return "LinkedIn post — turn the move into a practical lesson Ksusha can reuse for BidMatrix positioning."
+
+
+def _marketing_move_watchlist_line(signal: dict) -> str:
+    company = _clean_delivery_company(signal.get("company") or "") or "Company"
+    resource_phrase = _marketing_watchlist_resource_phrase(signal)
+    source = _marketing_move_source(signal)
+    if source:
+        channel = source.split(" — ", 1)[0]
+        return f"{company} — monitor {channel} for {resource_phrase}."
+    return f"{company} — monitor its site for {resource_phrase}."
+
+
+def _marketing_watchlist_resource_phrase(signal: dict) -> str:
+    move_type = _marketing_move_type(signal)
+    text = _normalize_delivery_text(" ".join(str(signal.get(field) or "") for field in signal))
+    if move_type == "webinar":
+        if _has_delivery_terms(text, "measurement", "incrementality", "attribution", "roas"):
+            return "new webinars or measurement resources"
+        return "new webinars or expert sessions"
+    if move_type == "playbook":
+        if _has_delivery_terms(text, "dsp", "infrastructure", "programmatic"):
+            return "new playbooks or DSP infrastructure content"
+        return "new playbooks or practical guides"
+    if move_type == "report":
+        return "new reports or benchmark data"
+    if move_type == "guide":
+        return "new guides, reports, or partner content"
+    if move_type == "podcast":
+        return "new podcasts or interviews"
+    if move_type == "case_study":
+        return "new case studies or customer proof"
+    if move_type == "partner_content":
+        return "new partner content or co-marketing campaigns"
+    if move_type == "media_placement":
+        return "new media placements or guest articles"
+    if move_type == "resource_hub":
+        return "new resource hub updates or buyer education content"
+    if move_type == "event_promo":
+        return "new event promos or webinar themes"
+    return "new positioning pages or content campaigns"
+
+
+def _has_visible_marketing_artifact(signal: dict) -> bool:
+    text = _normalize_delivery_text(
+        " ".join(
+            str(signal.get(field) or "")
+            for field in (
+                "title",
+                "url",
+                "source_domain",
+                "what_changed",
+                "why_it_matters",
+                "bidmatrix_angle",
+                "possible_use",
+                "marketing_insight",
+                "bidmatrix_use",
+                "content_bd_idea",
+                "signal_type",
+                "keep_reason",
+            )
+        )
+    )
+    artifact_terms = (
+        "article",
+        "benchmark",
+        "blog",
+        "case study",
+        "collaboration",
+        "event",
+        "guide",
+        "interview",
+        "media",
+        "newsletter",
+        "partner",
+        "playbook",
+        "podcast",
+        "report",
+        "research",
+        "resource",
+        "study",
+        "webinar",
+        "whitepaper",
+    )
+    vague_only = (
+        "positioning around ai-led campaign operations",
+        "market credibility move",
+        "worth watching for a clearer",
+    )
+    return any(term in text for term in artifact_terms) and not any(term in text for term in vague_only)
+
+
+def _marketing_move_type(signal: dict) -> str:
+    text = _normalize_delivery_text(
+        " ".join(
+            str(signal.get(field) or "")
+            for field in ("title", "url", "source_domain", "what_changed", "possible_use", "signal_type", "keep_reason")
+        )
+    )
+    if _has_delivery_terms(text, "webinar", "summit", "virtual event"):
+        return "webinar"
+    if _has_delivery_terms(text, "podcast", "interview"):
+        return "podcast"
+    if _has_delivery_terms(text, "case study", "customer story"):
+        return "case_study"
+    if _has_delivery_terms(text, "playbook"):
+        return "playbook"
+    if _has_delivery_terms(text, "guide", "how-to", "checklist"):
+        return "guide"
+    if _has_delivery_terms(text, "benchmark", "report", "research", "study", "whitepaper"):
+        return "report"
+    if _has_delivery_terms(text, "partner", "partnership", "collaboration", "co-marketing"):
+        return "partner_content"
+    if _has_delivery_terms(text, "adexchanger", "digiday", "business of apps", "ppc.land", "exchangewire", "media placement", "guest"):
+        return "media_placement"
+    if _has_delivery_terms(text, "resource hub", "resources"):
+        return "resource_hub"
+    if _has_delivery_terms(text, "event", "conference", "promo"):
+        return "event_promo"
+    return "product_positioning"
+
+
+def _marketing_move_type_label(move_type: str) -> str:
+    return {
+        "case_study": "case studies",
+        "event_promo": "event promotions",
+        "guide": "guides",
+        "media_placement": "media placements",
+        "partner_content": "partner content",
+        "playbook": "playbooks",
+        "podcast": "podcasts",
+        "product_positioning": "product-positioning pages",
+        "report": "reports",
+        "resource_hub": "resource hubs",
+        "webinar": "webinars",
+    }.get(move_type, move_type.replace("_", " "))
+
+
+def _marketing_insights_payload_theme(signal: dict) -> str:
+    text = _normalize_delivery_text(" ".join(str(signal.get(field) or "") for field in signal))
+    if _has_delivery_terms(text, "fraud", "verification", "traffic quality", "inventory quality", "ctv"):
+        return "traffic_quality"
+    if _has_delivery_terms(text, "measurement", "attribution", "roas", "incrementality", "mmp"):
+        return "measurement"
+    if _has_delivery_terms(text, "ai", "automation", "agentic", "optimization"):
+        return "ai"
+    return "other"
+
+
+def _marketing_move_source(signal: dict) -> str:
+    domain = str(signal.get("source_domain") or "").strip()
+    title = _clean_marketing_title(signal.get("title") or "")
+    if domain:
+        label = _source_domain_label(domain)
+        if title and len(title) <= 70:
+            return f"{label} — {title}"
+        return label
+    return title
+
+
+def _partner_or_media_name(signal: dict) -> str:
+    source = str(signal.get("source_domain") or "").strip()
+    if source:
+        return _source_domain_label(source)
+    return ""
+
+
+def _source_domain_label(domain: str) -> str:
+    cleaned = re.sub(r"^www\.", "", domain.strip().lower())
+    return {
+        "businessofapps.com": "Business of Apps",
+        "adexchanger.com": "AdExchanger",
+        "digiday.com": "Digiday",
+        "ppc.land": "ppc.land",
+        "exchangewire.com": "ExchangeWire",
+    }.get(cleaned, cleaned)
+
+
+def _clean_marketing_title(value: str) -> str:
+    cleaned = _clean_markdown_text(value).strip()
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    cleaned = cleaned.strip(" -—:")
+    if not cleaned:
+        return ""
+    if len(cleaned) > 90:
+        cleaned = cleaned[:87].rstrip() + "..."
+    return cleaned
+
+
+def _clean_delivery_company(value: str) -> str:
+    cleaned = _clean_markdown_text(str(value or "")).strip()
+    if not cleaned:
+        return ""
+    if re.search(r"\b(?:launches|introduces|releases|announces|expands|rolls out|unveils)\b", cleaned, flags=re.IGNORECASE):
+        cleaned = re.split(r"\b(?:launches|introduces|releases|announces|expands|rolls out|unveils)\b", cleaned, flags=re.IGNORECASE)[0].strip()
+    cleaned = cleaned.strip(" -—:'’")
+    if not cleaned or len(cleaned.split()) > 4:
+        return ""
+    return cleaned
+
+
+def _slug_delivery(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
 
 
 def _marketing_insights_company_line(item: dict[str, str], index: int = 1) -> str:
