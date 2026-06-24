@@ -76,6 +76,61 @@ def _marketing_markdown(tmp_path: Path) -> Path:
     return path
 
 
+def _generic_ai_marketing_markdown(tmp_path: Path) -> Path:
+    path = tmp_path / "marketing-insights-radar-2026-06-11.md"
+    path.write_text(
+        "\n".join(
+            [
+                "# Marketing Insights Radar — 2026-06-11",
+                "",
+                "## Today’s marketing pattern",
+                "Competitors are clustering around AI campaign operations and market credibility.",
+                "",
+                "## What companies are doing",
+                "",
+                "1. AppFollow is positioning around AI-led campaign operations.",
+                "",
+                "Marketing insight: AI is being positioned less as a feature and more as an operating layer for planning, testing, and optimizing growth.",
+                "",
+                "What BidMatrix can use: BidMatrix can frame AI around real UA workflows.",
+                "",
+                "Content / BD idea: BD talking point: Can your UA setup connect creative performance with budget decisions?",
+                "",
+                "2. Kochava is positioning around AI-led campaign operations.",
+                "",
+                "Marketing insight: AI is being positioned less as a feature and more as an operating layer for planning, testing, and optimizing growth.",
+                "",
+                "What BidMatrix can use: BidMatrix can frame AI around measurement and UA workflows.",
+                "",
+                "Content / BD idea: LinkedIn post: explain why AI buying needs measurable optimization loops.",
+                "",
+                "3. Mintegral is positioning around AI-led campaign operations.",
+                "",
+                "Marketing insight: AI is being positioned less as a feature and more as an operating layer for planning, testing, and optimizing growth.",
+                "",
+                "What BidMatrix can use: BidMatrix can frame AI around bidding optimization and campaign decisions.",
+                "",
+                "Content / BD idea: Sales deck note: show how AI campaign operations connect testing and spend control.",
+                "",
+                "4. Liftoff is using a market-structure move to strengthen its platform positioning.",
+                "",
+                "Marketing insight: Companies are using market-structure moves to look bigger, more integrated, and harder to replace in the growth stack.",
+                "",
+                "What BidMatrix can use: BidMatrix can use this for counter-positioning against broad platform claims.",
+                "",
+                "Content / BD idea: Counter-positioning angle: contrast BidMatrix’s focused growth story with broader platform-consolidation claims.",
+                "",
+                "## Watchlist",
+                "- Adjust is worth watching for a clearer AI campaign operations move.",
+                "- AppMetrica is worth watching for a clearer AI campaign operations move.",
+                "- Kayzen is worth watching for a clearer market credibility move.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
 def _delivery_state(tmp_path: Path) -> Path:
     return tmp_path / "delivery-state.json"
 
@@ -323,10 +378,48 @@ def test_marketing_insights_telegram_message_is_concise() -> None:
     assert "<b>Marketing Insights Radar — 2026-06-11</b>" in message
     assert "<b>Today’s marketing pattern</b>" in message
     assert "<b>Company insights</b>" in message
-    assert "1. AppsFlyer is expanding the measurement-proof narrative" in message
-    assert "Use: LinkedIn post:" in message
+    assert "1. AppsFlyer — trying to make measurement feel closer to growth decisions and budget proof." in message
+    assert "Use: LinkedIn post —" in message
     assert "<b>Watchlist</b>" in message
     assert len(message) < 1800
+
+
+def test_marketing_insights_telegram_copy_varies_generic_ai_actions(tmp_path) -> None:
+    message = delivery._marketing_insights_telegram_message(
+        _generic_ai_marketing_markdown(tmp_path).read_text(encoding="utf-8"),
+        date(2026, 6, 11),
+    )
+
+    assert "AppFollow — using AI messaging to move closer to campaign workflow and growth operations." in message
+    assert "Kochava — using AI language to make measurement look more actionable for UA teams." in message
+    assert "Mintegral — framing AI as part of media-buying optimization, not just ad network automation." in message
+    assert message.count("is positioning around AI-led campaign operations") == 0
+
+
+def test_marketing_insights_telegram_use_lines_are_practical(tmp_path) -> None:
+    message = delivery._marketing_insights_telegram_message(
+        _generic_ai_marketing_markdown(tmp_path).read_text(encoding="utf-8"),
+        date(2026, 6, 11),
+    )
+    use_lines = [line for line in message.splitlines() if line.startswith("Use:")]
+
+    assert use_lines
+    assert any("LinkedIn post" in line for line in use_lines)
+    assert any("BD angle" in line for line in use_lines)
+    assert any("Counter-positioning" in line for line in use_lines)
+    assert max(use_lines.count(line) for line in set(use_lines)) <= 2
+
+
+def test_marketing_insights_telegram_watchlist_avoids_placeholder_copy(tmp_path) -> None:
+    message = delivery._marketing_insights_telegram_message(
+        _generic_ai_marketing_markdown(tmp_path).read_text(encoding="utf-8"),
+        date(2026, 6, 11),
+    )
+
+    assert "worth watching for a clearer" not in message
+    assert "Adjust — watch whether it pushes analytics into growth-ops positioning." in message
+    assert "AppMetrica — watch whether it pushes analytics into growth-ops positioning." in message
+    assert "Kayzen — watch for market credibility or DSP infrastructure messaging." in message
 
 
 def test_cli_daily_logs_delivery_failure_cleanly(monkeypatch, tmp_path, capsys) -> None:
