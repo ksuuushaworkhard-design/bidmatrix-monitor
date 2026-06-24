@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.error import URLError
@@ -35,6 +36,43 @@ def _config() -> MonitorConfig:
 def _markdown(tmp_path: Path) -> Path:
     path = tmp_path / "bidmatrix-monitor-2026-06-11.md"
     path.write_text("Daily brief skipped: not enough relevant market signals found today.", encoding="utf-8")
+    return path
+
+
+def _marketing_markdown(tmp_path: Path) -> Path:
+    path = tmp_path / "marketing-insights-radar-2026-06-11.md"
+    path.write_text(
+        "\n".join(
+            [
+                "# Marketing Insights Radar — 2026-06-11",
+                "",
+                "## Today’s marketing pattern",
+                "Competitors are clustering around AI campaign operations and measurement proof.",
+                "",
+                "## What companies are doing",
+                "",
+                "1. AppsFlyer is expanding the measurement-proof narrative for growth teams.",
+                "",
+                "Marketing insight: Measurement companies are trying to own more of the growth conversation.",
+                "",
+                "What BidMatrix can use: BidMatrix can connect this to transparent ROAS and user quality.",
+                "",
+                "Content / BD idea: LinkedIn post: why mobile growth teams need performance proof.",
+                "",
+                "2. DoubleVerify is using fraud or inventory-quality signals to strengthen its verification story.",
+                "",
+                "Marketing insight: Verification and traffic-quality narratives are becoming a sales argument.",
+                "",
+                "What BidMatrix can use: BidMatrix can strengthen verified traffic messaging.",
+                "",
+                "Content / BD idea: Website message: strengthen budget protection language.",
+                "",
+                "## Watchlist",
+                "- AppLovin is worth watching for a clearer AI campaign operations move.",
+            ]
+        ),
+        encoding="utf-8",
+    )
     return path
 
 
@@ -183,6 +221,114 @@ def test_weekly_delivery_is_not_blocked_by_daily_state(monkeypatch, tmp_path, ca
     assert "DAILY_DELIVERY_SKIPPED" not in output
 
 
+def test_marketing_insights_delivery_sends_as_separate_daily_message(monkeypatch, tmp_path, capsys) -> None:
+    calls = {"count": 0}
+
+    def fake_urlopen(request, timeout=30):
+        calls["count"] += 1
+        return _Response()
+
+    monkeypatch.setenv("BIDMATRIX_DELIVERY_ENABLED", "true")
+    monkeypatch.setenv("BIDMATRIX_DELIVERY_CHANNEL", "telegram")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
+    monkeypatch.setattr(delivery, "urlopen", fake_urlopen)
+
+    delivery.maybe_deliver_report(_config(), _markdown(tmp_path), "daily")
+    delivery.maybe_deliver_marketing_insights_report(_config(), _marketing_markdown(tmp_path))
+
+    output = capsys.readouterr().out
+    state = _delivery_state(tmp_path).read_text(encoding="utf-8")
+    assert calls["count"] == 2
+    assert "DELIVERY_SUCCEEDED report_type=daily channel=telegram" in output
+    assert "MARKETING_INSIGHTS_DELIVERY_SUCCEEDED channel=telegram" in output
+    assert '"daily"' in state
+    assert '"telegram"' in state
+    assert '"marketing_insights_radar"' in state
+
+
+def test_v1_sent_state_does_not_block_marketing_insights_delivery(monkeypatch, tmp_path, capsys) -> None:
+    state_path = _delivery_state(tmp_path)
+    state_path.write_text(
+        '{\n  "daily": {\n    "telegram": {\n      "2026-06-11": {\n        "status": "sent"\n      }\n    }\n  }\n}\n',
+        encoding="utf-8",
+    )
+    calls = {"count": 0}
+
+    def fake_urlopen(request, timeout=30):
+        calls["count"] += 1
+        return _Response()
+
+    monkeypatch.setenv("BIDMATRIX_DELIVERY_ENABLED", "true")
+    monkeypatch.setenv("BIDMATRIX_DELIVERY_CHANNEL", "telegram")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
+    monkeypatch.setattr(delivery, "urlopen", fake_urlopen)
+
+    delivery.maybe_deliver_marketing_insights_report(_config(), _marketing_markdown(tmp_path))
+
+    output = capsys.readouterr().out
+    assert calls["count"] == 1
+    assert "MARKETING_INSIGHTS_DELIVERY_ATTEMPT channel=telegram" in output
+    assert "MARKETING_INSIGHTS_DELIVERY_SUCCEEDED channel=telegram" in output
+
+
+def test_marketing_insights_sent_state_blocks_duplicate_same_day(monkeypatch, tmp_path, capsys) -> None:
+    calls = {"count": 0}
+
+    def fake_urlopen(request, timeout=30):
+        calls["count"] += 1
+        return _Response()
+
+    monkeypatch.setenv("BIDMATRIX_DELIVERY_ENABLED", "true")
+    monkeypatch.setenv("BIDMATRIX_DELIVERY_CHANNEL", "telegram")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
+    monkeypatch.setattr(delivery, "urlopen", fake_urlopen)
+
+    markdown_path = _marketing_markdown(tmp_path)
+    delivery.maybe_deliver_marketing_insights_report(_config(), markdown_path)
+    delivery.maybe_deliver_marketing_insights_report(_config(), markdown_path)
+
+    output = capsys.readouterr().out
+    assert calls["count"] == 1
+    assert "MARKETING_INSIGHTS_DELIVERY_SKIPPED reason=already_sent_today date=2026-06-11" in output
+
+
+def test_failed_marketing_insights_delivery_does_not_mark_sent(monkeypatch, tmp_path, capsys) -> None:
+    def failing_urlopen(request, timeout=30):
+        raise URLError("temporary failure")
+
+    monkeypatch.setenv("BIDMATRIX_DELIVERY_ENABLED", "true")
+    monkeypatch.setenv("BIDMATRIX_DELIVERY_CHANNEL", "telegram")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
+    monkeypatch.setattr(delivery, "urlopen", failing_urlopen)
+    monkeypatch.setattr(delivery.time, "sleep", lambda _: None)
+
+    with pytest.raises(delivery.DeliveryError):
+        delivery.maybe_deliver_marketing_insights_report(_config(), _marketing_markdown(tmp_path))
+
+    output = capsys.readouterr().out
+    assert "MARKETING_INSIGHTS_DELIVERY_FAILED channel=telegram" in output
+    assert not _delivery_state(tmp_path).exists()
+
+
+def test_marketing_insights_telegram_message_is_concise() -> None:
+    message = delivery._marketing_insights_telegram_message(
+        _marketing_markdown(Path("/tmp")).read_text(encoding="utf-8"),
+        date(2026, 6, 11),
+    )
+
+    assert "<b>Marketing Insights Radar — 2026-06-11</b>" in message
+    assert "<b>Today’s marketing pattern</b>" in message
+    assert "<b>Company insights</b>" in message
+    assert "1. AppsFlyer is expanding the measurement-proof narrative" in message
+    assert "Use: LinkedIn post:" in message
+    assert "<b>Watchlist</b>" in message
+    assert len(message) < 1800
+
+
 def test_cli_daily_logs_delivery_failure_cleanly(monkeypatch, tmp_path, capsys) -> None:
     markdown_path = tmp_path / "bidmatrix-monitor-2026-06-11.md"
     json_path = tmp_path / "bidmatrix-monitor-2026-06-11.json"
@@ -246,6 +392,12 @@ def test_cli_daily_still_writes_reports_when_delivery_is_already_sent(monkeypatc
     monkeypatch.setattr(cli, "_build_daily_report", lambda config, debug_exa=False: (fake_report, fake_client))
     monkeypatch.setattr(cli, "write_report", lambda report, report_dir: (markdown_path, json_path, curated_path))
     monkeypatch.setattr(cli, "write_daily_audit_report", lambda report, report_dir: audit_path)
+    monkeypatch.setattr(
+        cli,
+        "build_marketing_insights_radar_preview",
+        lambda: (_marketing_markdown(tmp_path), tmp_path / "marketing-insights-radar-2026-06-11.json", {}),
+    )
+    monkeypatch.setattr(cli, "maybe_deliver_marketing_insights_report", lambda config, markdown_path: None)
     monkeypatch.setenv("BIDMATRIX_DELIVERY_ENABLED", "true")
     monkeypatch.setenv("BIDMATRIX_DELIVERY_CHANNEL", "telegram")
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
@@ -258,4 +410,52 @@ def test_cli_daily_still_writes_reports_when_delivery_is_already_sent(monkeypatc
     output = capsys.readouterr().out
     assert "REPORTS_WRITTEN mode=daily" in output
     assert "DAILY_DELIVERY_SKIPPED reason=already_sent_today date=2026-06-11" in output
+    assert "MARKETING_INSIGHTS_REPORT_WRITTEN" in output
+
+
+def test_cli_daily_generates_and_delivers_marketing_insights_after_v1(monkeypatch, tmp_path, capsys) -> None:
+    markdown_path = tmp_path / "bidmatrix-monitor-2026-06-11.md"
+    json_path = tmp_path / "bidmatrix-monitor-2026-06-11.json"
+    curated_path = tmp_path / "bidmatrix-monitor-2026-06-11-curated.json"
+    for path in (markdown_path, json_path, curated_path):
+        path.write_text("x", encoding="utf-8")
+
+    marketing_markdown_path = _marketing_markdown(tmp_path)
+    marketing_json_path = tmp_path / "marketing-insights-radar-2026-06-11.json"
+    marketing_json_path.write_text("{}", encoding="utf-8")
+    calls: list[str] = []
+
+    fake_config = SimpleNamespace(
+        outputs=SimpleNamespace(report_dir=str(tmp_path)),
+        delivery=SimpleNamespace(enabled=True, channel="telegram", send_daily=True, send_weekly=True),
+    )
+    fake_client = SimpleNamespace(print_collection_summary=lambda: None)
+    fake_report = SimpleNamespace(diagnostics={})
+    audit_path = tmp_path / "bidmatrix-monitor-2026-06-11-audit.json"
+    audit_path.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(cli, "load_config", lambda path: fake_config)
+    monkeypatch.setattr(cli, "_build_daily_report", lambda config, debug_exa=False: (fake_report, fake_client))
+    monkeypatch.setattr(cli, "write_report", lambda report, report_dir: (markdown_path, json_path, curated_path))
+    monkeypatch.setattr(cli, "write_daily_audit_report", lambda report, report_dir: audit_path)
+    monkeypatch.setattr(cli, "maybe_deliver_report", lambda config, path, report_type: calls.append(f"v1:{report_type}"))
+    monkeypatch.setattr(
+        cli,
+        "build_marketing_insights_radar_preview",
+        lambda: (marketing_markdown_path, marketing_json_path, {"companies_with_useful_signals": 2}),
+    )
+    monkeypatch.setattr(
+        cli,
+        "maybe_deliver_marketing_insights_report",
+        lambda config, path: calls.append(f"marketing:{path.name}"),
+    )
+    monkeypatch.setattr("sys.argv", ["bidmatrix-monitor"])
+
+    cli.main()
+
+    output = capsys.readouterr().out
+    assert calls == ["v1:daily", "marketing:marketing-insights-radar-2026-06-11.md"]
+    assert "MARKETING_INSIGHTS_RUN_STARTED" in output
+    assert "MARKETING_INSIGHTS_REPORT_WRITTEN" in output
+    assert "RUN_FINISHED mode=daily status=success" in output
     assert "RUN_FINISHED mode=daily status=success" in output

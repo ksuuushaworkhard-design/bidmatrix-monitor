@@ -6,7 +6,7 @@ from pathlib import Path
 from .audit import write_daily_audit_report
 from .competitor_radar import build_competitor_radar_preview
 from .config import load_config
-from .delivery import DeliveryError, maybe_deliver_report
+from .delivery import DeliveryError, maybe_deliver_marketing_insights_report, maybe_deliver_report
 from .intelligence import build_report
 from .linkedin_watch import build_linkedin_watch_preview
 from .market_brief_v2 import build_market_brief_v2_preview
@@ -174,6 +174,19 @@ def main() -> None:
         _print_diagnostics(report.diagnostics)
     try:
         maybe_deliver_report(config, markdown_path, "daily")
+    except DeliveryError:
+        print("RUN_FINISHED mode=daily status=delivery_failed")
+        raise SystemExit(2)
+    try:
+        print("MARKETING_INSIGHTS_RUN_STARTED")
+        marketing_markdown_path, marketing_json_path, _marketing_payload = build_marketing_insights_radar_preview()
+        print(f"Wrote {marketing_markdown_path}")
+        print(f"Wrote {marketing_json_path}")
+        print(
+            "MARKETING_INSIGHTS_REPORT_WRITTEN "
+            f"markdown={marketing_markdown_path} json={marketing_json_path}"
+        )
+        maybe_deliver_marketing_insights_report(config, marketing_markdown_path)
     except DeliveryError:
         print("RUN_FINISHED mode=daily status=delivery_failed")
         raise SystemExit(2)
