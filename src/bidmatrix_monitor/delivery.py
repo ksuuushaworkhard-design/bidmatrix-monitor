@@ -64,6 +64,37 @@ def maybe_deliver_report(config: MonitorConfig, markdown_path: Path, report_type
         print(f"DELIVERY_SUCCEEDED report_type={report_type} channel={channel}")
 
 
+def maybe_deliver_marketing_insights_report(config: MonitorConfig, markdown_path: Path) -> None:
+    load_dotenv()
+    if not _delivery_enabled(config, "daily"):
+        print("MARKETING_INSIGHTS_DELIVERY_SKIPPED reason=disabled")
+        return
+
+    channel = os.environ.get("BIDMATRIX_DELIVERY_CHANNEL", config.delivery.channel).strip().lower()
+    state_path = _delivery_state_path(markdown_path)
+    run_date = _marketing_insights_run_date(markdown_path)
+
+    if channel == "telegram" and _marketing_insights_delivery_already_sent(state_path, channel, run_date):
+        print(f"MARKETING_INSIGHTS_DELIVERY_SKIPPED reason=already_sent_today date={run_date.isoformat()}")
+        return
+
+    print(f"MARKETING_INSIGHTS_DELIVERY_ATTEMPT channel={channel}")
+
+    try:
+        if channel != "telegram":
+            raise RuntimeError(f"Unsupported Marketing Insights Radar delivery channel: {channel}")
+        _send_marketing_insights_telegram(markdown_path.read_text(encoding="utf-8"), run_date)
+    except Exception as exc:
+        print(
+            "MARKETING_INSIGHTS_DELIVERY_FAILED "
+            f"channel={channel} error_type={type(exc).__name__} error={exc}"
+        )
+        raise DeliveryError("telegram delivery failed for Marketing Insights Radar report") from exc
+
+    _mark_marketing_insights_delivery_sent(state_path, channel, run_date)
+    print(f"MARKETING_INSIGHTS_DELIVERY_SUCCEEDED channel={channel}")
+
+
 def _delivery_state_path(markdown_path: Path) -> Path:
     return markdown_path.parent / "delivery-state.json"
 
@@ -103,6 +134,30 @@ def _mark_daily_delivery_sent(path: Path, channel: str, run_date: date) -> None:
     _save_delivery_state(path, state)
 
 
+def _marketing_insights_delivery_already_sent(path: Path, channel: str, run_date: date) -> bool:
+    state = _load_delivery_state(path)
+    return (
+        state.get("daily", {})
+        .get("marketing_insights_radar", {})
+        .get(channel, {})
+        .get(run_date.isoformat(), {})
+        .get("status")
+        == "sent"
+    )
+
+
+def _mark_marketing_insights_delivery_sent(path: Path, channel: str, run_date: date) -> None:
+    state = _load_delivery_state(path)
+    daily = state.setdefault("daily", {})
+    product = daily.setdefault("marketing_insights_radar", {})
+    by_channel = product.setdefault(channel, {})
+    by_channel[run_date.isoformat()] = {
+        "status": "sent",
+        "sent_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    _save_delivery_state(path, state)
+
+
 def _delivery_enabled(config: MonitorConfig, report_type: str) -> bool:
     env_value = os.environ.get("BIDMATRIX_DELIVERY_ENABLED")
     enabled = _bool(env_value) if env_value is not None else config.delivery.enabled
@@ -129,6 +184,15 @@ def _send_telegram(subject: str, text: str, report_type: str) -> str:
             return "skipped_quality_gate"
     _post_telegram_message(token, chat_id, message)
     return "sent"
+
+
+def _send_marketing_insights_telegram(text: str, run_date: date) -> None:
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    if not token or not chat_id:
+        raise RuntimeError("Telegram delivery requires TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.")
+
+    _post_telegram_message(token, chat_id, _marketing_insights_telegram_message(text, run_date))
 
 
 def _post_telegram_message(token: str, chat_id: str, message: str) -> None:
@@ -233,6 +297,37 @@ def _telegram_message(subject: str, text: str, report_type: str) -> str:
             lines.extend(["", "No strong fresh market signals found today. The monitor will keep watching mobile UA, measurement, fraud, CTV, AI campaign ops, and app growth."])
 
     return _truncate_daily('\n'.join(lines), 3800)
+
+
+def _marketing_insights_telegram_message(text: str, run_date: date) -> str:
+    pattern = _marketing_insights_pattern(text)
+    items = _marketing_insights_items(text)
+    watchlist = _marketing_insights_watchlist(text)
+    title = f"<b>Marketing Insights Radar — {html.escape(run_date.isoformat())}</b>"
+    lines = [title]
+
+    if pattern:
+        lines.extend(["", "<b>Today’s marketing pattern</b>", html.escape(_shorten(pattern, 360))])
+
+    lines.extend(["", "<b>Company insights</b>"])
+    if items:
+        for index, item in enumerate(items[:5], start=1):
+            lines.append(f"{index}. {html.escape(_shorten(item['action'], 220))}")
+            idea = item.get("content_bd_idea") or item.get("bidmatrix_use") or item.get("marketing_insight")
+            if idea:
+                lines.append(f"Use: {html.escape(_shorten(idea, 180))}")
+            lines.append("")
+    else:
+        lines.append("No strong marketing insight signals passed the quality gate.")
+
+    if watchlist:
+        if lines[-1] != "":
+            lines.append("")
+        lines.append("<b>Watchlist</b>")
+        for item in watchlist[:3]:
+            lines.append(f"- {html.escape(_shorten(item, 160))}")
+
+    return _truncate("\n".join(lines).rstrip(), 3800)
 
 def _telegram_weekly_message(subject: str, text: str) -> str:
     date_label = _date_from_subject(subject)
@@ -360,6 +455,90 @@ def _report_items(text: str) -> list[dict[str, str]]:
     if current:
         items.append(current)
     return items
+
+
+def _marketing_insights_run_date(markdown_path: Path) -> date:
+    match = re.search(r"(\d{4}-\d{2}-\d{2})", markdown_path.stem)
+    if match:
+        try:
+            return date.fromisoformat(match.group(1))
+        except ValueError:
+            pass
+    return date.today()
+
+
+def _marketing_insights_pattern(text: str) -> str:
+    return _section_body(text, "Today’s marketing pattern")
+
+
+def _marketing_insights_items(text: str) -> list[dict[str, str]]:
+    body = _section_body(text, "What companies are doing")
+    if not body:
+        return []
+    items: list[dict[str, str]] = []
+    current: dict[str, str] | None = None
+    for line in body.splitlines():
+        stripped = line.strip()
+        heading = re.match(r"^(?P<rank>\d+)\.\s+(?P<action>.+)$", stripped)
+        if heading:
+            if current:
+                items.append(current)
+            current = {
+                "action": _clean_markdown_text(heading.group("action")),
+                "marketing_insight": "",
+                "bidmatrix_use": "",
+                "content_bd_idea": "",
+            }
+            continue
+        if current is None:
+            continue
+        if stripped.startswith("Marketing insight:"):
+            current["marketing_insight"] = _clean_markdown_text(stripped.split(":", 1)[1].strip())
+        elif stripped.startswith("What BidMatrix can use:"):
+            current["bidmatrix_use"] = _clean_markdown_text(stripped.split(":", 1)[1].strip())
+        elif stripped.startswith("Content / BD idea:"):
+            current["content_bd_idea"] = _clean_markdown_text(stripped.split(":", 1)[1].strip())
+    if current:
+        items.append(current)
+    return items
+
+
+def _marketing_insights_watchlist(text: str) -> list[str]:
+    body = _section_body(text, "Watchlist")
+    if not body:
+        return []
+    items: list[str] = []
+    seen: set[str] = set()
+    for line in body.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("- "):
+            continue
+        item = _clean_markdown_text(stripped.removeprefix("- ").strip())
+        if not item or item.lower().startswith("no watchlist"):
+            continue
+        key = item.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        items.append(item)
+    return items
+
+
+def _section_body(text: str, heading: str) -> str:
+    lines = text.splitlines()
+    start = None
+    for index, line in enumerate(lines):
+        if line.strip() == f"## {heading}":
+            start = index + 1
+            break
+    if start is None:
+        return ""
+    body: list[str] = []
+    for line in lines[start:]:
+        if line.strip().startswith("## "):
+            break
+        body.append(line)
+    return "\n".join(body).strip()
 
 def _weekly_sections(text: str) -> dict[str, list[str]]:
     sections: dict[str, list[str]] = {}
