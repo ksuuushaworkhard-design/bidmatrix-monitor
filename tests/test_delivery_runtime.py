@@ -131,6 +131,98 @@ def _generic_ai_marketing_markdown(tmp_path: Path) -> Path:
     return path
 
 
+def _marketing_moves_report(tmp_path: Path) -> Path:
+    markdown_path = tmp_path / "marketing-insights-radar-2026-06-11.md"
+    markdown_path.write_text(
+        "\n".join(
+            [
+                "# Marketing Insights Radar — 2026-06-11",
+                "",
+                "## Today’s marketing pattern",
+                "Competitors are using reports, guides, and partner content to educate growth teams.",
+                "",
+                "## What companies are doing",
+                "",
+                "1. AppsFlyer is expanding the measurement-proof narrative for growth teams.",
+                "",
+                "Marketing insight: Measurement companies are trying to own more of the growth conversation.",
+                "",
+                "What BidMatrix can use: BidMatrix can connect this to transparent ROAS and user quality.",
+                "",
+                "Content / BD idea: LinkedIn post: why mobile growth teams need performance proof.",
+                "",
+                "## Watchlist",
+                "- Adjust is worth watching for a clearer AI campaign operations move.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "marketing-insights-radar-2026-06-11.json").write_text(
+        """
+{
+  "run_date": "2026-06-11",
+  "signals": [
+    {
+      "company": "AppsFlyer",
+      "title": "Web-to-App Measurement Guide",
+      "url": "https://www.appsflyer.com/resources/guides/web-to-app-measurement/",
+      "source_domain": "appsflyer.com",
+      "signal_type": "report_benchmark",
+      "kept": true,
+      "what_changed": "AppsFlyer published a web-to-app measurement guide on its resources hub.",
+      "why_it_matters": "They are educating growth teams around full-funnel measurement.",
+      "bidmatrix_angle": "BidMatrix can connect traffic quality to full-funnel proof.",
+      "possible_use": "LinkedIn post about full-funnel performance proof."
+    },
+    {
+      "company": "DoubleVerify",
+      "title": "CTV Fraud Research Report",
+      "url": "https://doubleverify.com/reports/ctv-fraud-research/",
+      "source_domain": "doubleverify.com",
+      "signal_type": "report_benchmark",
+      "kept": true,
+      "what_changed": "DoubleVerify published fraud and CTV quality research.",
+      "why_it_matters": "They are turning risk data into sales enablement content.",
+      "bidmatrix_angle": "BidMatrix can strengthen anti-fraud messaging.",
+      "possible_use": "Website message about budget protection."
+    },
+    {
+      "company": "Mintegral",
+      "title": "Mintegral is positioning around AI-led campaign operations",
+      "source_domain": "mintegral.com",
+      "signal_type": "positioning_shift",
+      "kept": true,
+      "what_changed": "Mintegral is positioning around AI-led campaign operations.",
+      "why_it_matters": "AI positioning.",
+      "bidmatrix_angle": "AI positioning.",
+      "possible_use": "AI positioning."
+    }
+  ],
+  "watchlist": [
+    {
+      "company": "Adjust",
+      "title": "Incrementality webinar series",
+      "source_domain": "adjust.com",
+      "signal_type": "webinar",
+      "kept": false,
+      "what_changed": "Adjust promoted an incrementality webinar series."
+    },
+    {
+      "company": "Kayzen",
+      "title": "DSP infrastructure playbook",
+      "source_domain": "kayzen.io",
+      "signal_type": "playbook",
+      "kept": false,
+      "what_changed": "Kayzen shared a DSP infrastructure playbook."
+    }
+  ]
+}
+""",
+        encoding="utf-8",
+    )
+    return markdown_path
+
+
 def _delivery_state(tmp_path: Path) -> Path:
     return tmp_path / "delivery-state.json"
 
@@ -376,50 +468,57 @@ def test_marketing_insights_telegram_message_is_concise() -> None:
     )
 
     assert "<b>Marketing Insights Radar — 2026-06-11</b>" in message
-    assert "<b>Today’s marketing pattern</b>" in message
-    assert "<b>Company insights</b>" in message
+    assert "<b>Today’s useful marketing moves</b>" in message
+    assert "<b>Marketing moves to check</b>" in message
+    assert "<b>Company insights</b>" not in message
     assert "1. AppsFlyer — trying to make measurement feel closer to growth decisions and budget proof." in message
-    assert "Use: LinkedIn post —" in message
+    assert "Use for BidMatrix: LinkedIn post —" in message
     assert "<b>Watchlist</b>" in message
     assert len(message) < 1800
 
 
-def test_marketing_insights_telegram_copy_varies_generic_ai_actions(tmp_path) -> None:
-    message = delivery._marketing_insights_telegram_message(
-        _generic_ai_marketing_markdown(tmp_path).read_text(encoding="utf-8"),
+def test_marketing_insights_telegram_uses_concrete_marketing_moves_from_json(tmp_path) -> None:
+    message = delivery._marketing_insights_telegram_message_from_report(
+        _marketing_moves_report(tmp_path),
         date(2026, 6, 11),
     )
 
-    assert "AppFollow — using AI messaging to move closer to campaign workflow and growth operations." in message
-    assert "Kochava — using AI language to make measurement look more actionable for UA teams." in message
-    assert "Mintegral — framing AI as part of media-buying optimization, not just ad network automation." in message
-    assert message.count("is positioning around AI-led campaign operations") == 0
+    assert "<b>Marketing moves to check</b>" in message
+    assert "AppsFlyer — published Web-to-App Measurement Guide." in message
+    assert "DoubleVerify — published CTV Fraud Research Report." in message
+    assert "Source: appsflyer.com — Web-to-App Measurement Guide" in message
+    assert "Source: doubleverify.com — CTV Fraud Research Report" in message
+    assert "Mintegral" not in message
+    assert "positioning around AI-led campaign operations" not in message
 
 
 def test_marketing_insights_telegram_use_lines_are_practical(tmp_path) -> None:
-    message = delivery._marketing_insights_telegram_message(
-        _generic_ai_marketing_markdown(tmp_path).read_text(encoding="utf-8"),
+    message = delivery._marketing_insights_telegram_message_from_report(
+        _marketing_moves_report(tmp_path),
         date(2026, 6, 11),
     )
-    use_lines = [line for line in message.splitlines() if line.startswith("Use:")]
+    use_lines = [line for line in message.splitlines() if line.startswith("Use for BidMatrix:")]
 
     assert use_lines
     assert any("LinkedIn post" in line for line in use_lines)
-    assert any("BD angle" in line for line in use_lines)
-    assert any("Counter-positioning" in line for line in use_lines)
+    assert any("Sales deck note" in line or "Website message" in line for line in use_lines)
     assert max(use_lines.count(line) for line in set(use_lines)) <= 2
 
 
 def test_marketing_insights_telegram_watchlist_avoids_placeholder_copy(tmp_path) -> None:
-    message = delivery._marketing_insights_telegram_message(
-        _generic_ai_marketing_markdown(tmp_path).read_text(encoding="utf-8"),
+    message = delivery._marketing_insights_telegram_message_from_report(
+        _marketing_moves_report(tmp_path),
         date(2026, 6, 11),
     )
 
     assert "worth watching for a clearer" not in message
-    assert "Adjust — watch whether it pushes analytics into growth-ops positioning." in message
-    assert "AppMetrica — watch whether it pushes analytics into growth-ops positioning." in message
-    assert "Kayzen — watch for market credibility or DSP infrastructure messaging." in message
+    assert "more webinar" not in message
+    assert "more playbook" not in message
+    assert "more report" not in message
+    assert "more article" not in message
+    assert "more podcast" not in message
+    assert "Adjust — monitor adjust.com for new webinars or measurement resources." in message
+    assert "Kayzen — monitor kayzen.io for new playbooks or DSP infrastructure content." in message
 
 
 def test_cli_daily_logs_delivery_failure_cleanly(monkeypatch, tmp_path, capsys) -> None:
