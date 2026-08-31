@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import is_dataclass, replace
 from pathlib import Path
+from types import SimpleNamespace
 
 from .audit import write_daily_audit_report
 from .competitor_radar import build_competitor_radar_preview
@@ -13,6 +15,12 @@ from .market_brief_v2 import build_market_brief_v2_preview
 from .marketing_insights_radar import build_marketing_insights_radar_preview
 from .render import write_report
 from .weekly import build_weekly_digest, write_weekly_digest
+from .weekly_email import (
+    WeeklyEmailError,
+    build_and_send_weekly_email_test_run,
+    build_weekly_email_preview,
+    send_weekly_email_test,
+)
 
 
 def main() -> None:
@@ -21,6 +29,40 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help="Validate config without calling Exa.")
     parser.add_argument("--weekly", action="store_true", help="Build a weekly digest from recent curated reports.")
     parser.add_argument("--days", type=int, default=7, help="Number of days to include for --weekly.")
+    parser.add_argument(
+        "--weekly-email-preview",
+        action="store_true",
+        help="Build preview-only weekly email HTML/TXT/JSON files from recent curated reports.",
+    )
+    parser.add_argument(
+        "--weekly-email-source-report-dir",
+        default=None,
+        help="Optional source report directory for --weekly-email-preview; preview files still write to configured report_dir.",
+    )
+    parser.add_argument(
+        "--weekly-email-send-test",
+        help="Send a guarded Resend test email from a weekly email preview manifest.",
+    )
+    parser.add_argument(
+        "--weekly-email-test-run",
+        action="store_true",
+        help="Build a weekly email preview and send it to the internal test recipient list.",
+    )
+    parser.add_argument(
+        "--weekly-email-refresh-source-report",
+        action="store_true",
+        help="Build one fresh source report before composing the weekly email; does not deliver Telegram.",
+    )
+    parser.add_argument(
+        "--weekly-email-send-dry-run",
+        action="store_true",
+        help="Validate --weekly-email-send-test without calling Resend.",
+    )
+    parser.add_argument(
+        "--weekly-email-env-file",
+        default=None,
+        help="Optional .env file for weekly email test-send credentials.",
+    )
     parser.add_argument("--diagnostics", action="store_true", help="Print curation diagnostics after a daily run.")
     parser.add_argument("--debug-exa", action="store_true", help="Print detailed Exa query timing logs.")
     parser.add_argument(
@@ -71,6 +113,26 @@ def main() -> None:
         help="Maximum Exa queries for the Market Brief v2 preview, capped internally at 20.",
     )
     args = parser.parse_args()
+
+    if args.weekly_email_send_test:
+        try:
+            result = send_weekly_email_test(
+                args.weekly_email_send_test,
+                dry_run=args.weekly_email_send_dry_run,
+                env_path=args.weekly_email_env_file,
+            )
+        except WeeklyEmailError as exc:
+            print(f"WEEKLY_EMAIL_TEST_SEND_FAILED error_type={type(exc).__name__} error={exc}")
+            raise SystemExit(2) from exc
+        print(
+            "WEEKLY_EMAIL_TEST_SEND "
+            f"mode={result['mode']} "
+            f"to={result['to']} "
+            f"from={result['from']} "
+            f"subject={result['subject']} "
+            f"manifest={result['manifest_path']}"
+        )
+        return
 
     if args.market_brief_v2_preview:
         markdown_path, json_path, audit_path, payload = build_market_brief_v2_preview(
@@ -132,6 +194,58 @@ def main() -> None:
     config = load_config(args.config)
     if args.dry_run:
         print(f"Loaded {len(config.topics)} topics for {config.brand_name}.")
+        return
+
+    if args.weekly_email_preview:
+        report_dir = Path(config.outputs.report_dir)
+        if args.weekly_email_refresh_source_report:
+            _refresh_weekly_email_source_report(config, report_dir, days=args.days, debug_exa=args.debug_exa)
+        html_path, text_path, manifest_path, digest = build_weekly_email_preview(
+            report_dir,
+            days=args.days,
+            source_report_dir=args.weekly_email_source_report_dir,
+        )
+        manifest = digest.get("email_preview", {})
+        print(f"Wrote {html_path}")
+        print(f"Wrote {text_path}")
+        print(f"Wrote {manifest_path}")
+        print(
+            "WEEKLY_EMAIL_PREVIEW "
+            f"subject={manifest.get('email_subject')} "
+            f"items={manifest.get('items_count')} "
+            f"external_send_ready={manifest.get('external_send_ready')} "
+            f"approval_required={manifest.get('approval_required')}"
+        )
+        return
+
+    if args.weekly_email_test_run:
+        report_dir = Path(config.outputs.report_dir)
+        print("WEEKLY_EMAIL_TEST_RUN_STARTED")
+        if args.weekly_email_refresh_source_report:
+            _refresh_weekly_email_source_report(config, report_dir, days=args.days, debug_exa=args.debug_exa)
+        try:
+            result = build_and_send_weekly_email_test_run(
+                report_dir,
+                days=args.days,
+                source_report_dir=args.weekly_email_source_report_dir,
+                dry_run=args.weekly_email_send_dry_run,
+                env_path=args.weekly_email_env_file,
+            )
+        except WeeklyEmailError as exc:
+            print(f"WEEKLY_EMAIL_TEST_RUN_FAILED error_type={type(exc).__name__} error={exc}")
+            raise SystemExit(2) from exc
+        print(f"Wrote {result['html_path']}")
+        print(f"Wrote {result['text_path']}")
+        print(f"Wrote {result['manifest_path']}")
+        print(
+            "WEEKLY_EMAIL_TEST_RUN_FINISHED "
+            f"mode={result['mode']} "
+            f"to={result['to']} "
+            f"from={result['from']} "
+            f"subject={result['subject']} "
+            f"items={result.get('items_count')} "
+            f"external_send_ready={result.get('external_send_ready')}"
+        )
         return
 
     if args.weekly:
@@ -226,6 +340,45 @@ def _build_daily_report(config, debug_exa: bool = False):
 
     report.diagnostics.update(client.collection_stats())
     return report, client
+
+
+def _refresh_weekly_email_source_report(config, report_dir: Path, days: int = 7, debug_exa: bool = False) -> None:
+    weekly_config = _weekly_email_source_config(config, days)
+    lookback_hours = getattr(getattr(weekly_config, "search", None), "max_age_hours", None)
+    print(f"WEEKLY_EMAIL_SOURCE_REFRESH_STARTED lookback_hours={lookback_hours}")
+    report, client = _build_daily_report(weekly_config, debug_exa=debug_exa)
+    markdown_path, json_path, curated_json_path = write_report(report, report_dir)
+    audit_json_path = write_daily_audit_report(report, report_dir)
+    print(f"Wrote {markdown_path}")
+    print(f"Wrote {json_path}")
+    print(f"Wrote {curated_json_path}")
+    print(f"Wrote {audit_json_path}")
+    print(
+        "WEEKLY_EMAIL_SOURCE_REFRESH_WRITTEN "
+        f"markdown={markdown_path} json={json_path} curated={curated_json_path} audit={audit_json_path}"
+    )
+    client.print_collection_summary()
+    _print_pipeline_state(report.diagnostics)
+
+
+def _weekly_email_source_config(config, days: int):
+    search = getattr(config, "search", None)
+    if search is None:
+        return config
+
+    weekly_hours = max(1, int(days)) * 24
+    current_hours = getattr(search, "max_age_hours", None)
+    if current_hours is not None:
+        weekly_hours = max(weekly_hours, int(current_hours))
+
+    if is_dataclass(config) and is_dataclass(search):
+        return replace(config, search=replace(search, max_age_hours=weekly_hours))
+
+    search_values = dict(vars(search))
+    search_values["max_age_hours"] = weekly_hours
+    config_values = dict(vars(config))
+    config_values["search"] = SimpleNamespace(**search_values)
+    return SimpleNamespace(**config_values)
 
 
 def _print_diagnostics(diagnostics: dict) -> None:
