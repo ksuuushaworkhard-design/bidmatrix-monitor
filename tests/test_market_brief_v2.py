@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import json
+from datetime import date as real_date
 from pathlib import Path
 
+import pytest
+
 from bidmatrix_monitor import cli as cli_module
+from bidmatrix_monitor import market_brief_v2 as market_brief_v2_module
 from bidmatrix_monitor.market_brief_v2 import (
     collect_market_brief_v2_payload,
     _apply_compact_markdown_quality_gate,
@@ -17,6 +21,17 @@ from bidmatrix_monitor.market_brief_v2 import (
     render_market_brief_v2_markdown,
     write_market_brief_v2_preview,
 )
+
+
+class _FixedDate(real_date):
+    @classmethod
+    def today(cls) -> real_date:
+        return cls(2026, 6, 20)
+
+
+@pytest.fixture(autouse=True)
+def _freeze_market_brief_v2_today(monkeypatch) -> None:
+    monkeypatch.setattr(market_brief_v2_module, "date", _FixedDate)
 
 
 def _signal(**overrides):
