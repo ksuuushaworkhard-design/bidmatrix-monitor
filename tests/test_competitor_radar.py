@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import json
+from datetime import date as real_date
 from pathlib import Path
 
+import pytest
+
 from bidmatrix_monitor import cli as cli_module
+from bidmatrix_monitor import competitor_radar as competitor_radar_module
 from bidmatrix_monitor.competitor_radar import (
     _evaluate_signal,
     _weekly_pattern,
@@ -13,6 +17,17 @@ from bidmatrix_monitor.competitor_radar import (
     render_competitor_radar_markdown,
     write_competitor_radar_preview,
 )
+
+
+class _FixedDate(real_date):
+    @classmethod
+    def today(cls) -> real_date:
+        return cls(2026, 6, 20)
+
+
+@pytest.fixture(autouse=True)
+def _freeze_competitor_radar_today(monkeypatch) -> None:
+    monkeypatch.setattr(competitor_radar_module, "date", _FixedDate)
 
 
 def test_load_competitor_radar_settings_reads_companies(tmp_path: Path) -> None:
