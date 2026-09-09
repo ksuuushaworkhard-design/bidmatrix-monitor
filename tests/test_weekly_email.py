@@ -402,6 +402,97 @@ def test_weekly_email_preview_uses_distinct_companies_for_main_items(monkeypatch
     assert digest["diagnostics"]["weekly_email_selected_items_count"] == 5
 
 
+def test_weekly_email_preview_uses_telegram_pipeline_items_not_background_fillers(
+    monkeypatch, tmp_path: Path
+) -> None:
+    source_dir = tmp_path / "source-reports"
+    output_dir = tmp_path / "reports"
+    source_dir.mkdir()
+    source_payload = {
+        "daily_digest_items": [
+            {
+                "company_or_topic": "Adjust",
+                "title": "Adjust published mobile ad fraud report",
+                "url": "https://www.adjust.com/blog/mobile-ad-fraud-2026/",
+                "source_domain": "adjust.com",
+                "what_happened": "Adjust published a mobile ad fraud report.",
+                "why_it_matters_for_bidmatrix": "Fraud prevention is being tied to performance protection.",
+                "content_angle": "Explain how traffic quality protects media budgets.",
+            },
+            {
+                "company_or_topic": "Innovid",
+                "title": "Innovid launched NIVO AI assistant integration",
+                "url": "https://www.exchangewire.com/blog/2026/09/09/innovid-expands-nivo-with-meta-ads-mcp-integration/",
+                "source_domain": "exchangewire.com",
+                "what_happened": "Innovid integrated its NIVO AI assistant with Meta Ads.",
+                "why_it_matters_for_bidmatrix": "AI is moving closer to campaign operations.",
+                "content_angle": "Discuss AI that improves decisions, not just reporting speed.",
+            },
+        ],
+        "background_items": [
+            {
+                "company_or_topic": "Old Context One",
+                "title": "Old context one",
+                "url": "https://example.com/old-one",
+                "source_domain": "example.com",
+                "what_happened": "Old context should not become a weekly email main item.",
+            },
+            {
+                "company_or_topic": "Old Context Two",
+                "title": "Old context two",
+                "url": "https://example.com/old-two",
+                "source_domain": "example.com",
+                "what_happened": "Old context should not become a weekly email main item.",
+            },
+            {
+                "company_or_topic": "Old Context Three",
+                "title": "Old context three",
+                "url": "https://example.com/old-three",
+                "source_domain": "example.com",
+                "what_happened": "Old context should not become a weekly email main item.",
+            },
+        ],
+    }
+    (source_dir / "bidmatrix-monitor-2026-09-09-curated.json").write_text(
+        json.dumps(source_payload),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        weekly_email,
+        "build_weekly_digest",
+        lambda report_dir, days: {
+            **_digest(),
+            "what_actually_happened": [
+                {"company": "Legacy One", "event": "legacy item", "source": "legacy.com"},
+                {"company": "Legacy Two", "event": "legacy item", "source": "legacy.com"},
+                {"company": "Legacy Three", "event": "legacy item", "source": "legacy.com"},
+                {"company": "Legacy Four", "event": "legacy item", "source": "legacy.com"},
+                {"company": "Legacy Five", "event": "legacy item", "source": "legacy.com"},
+            ],
+            "limited_signal_volume": False,
+        },
+    )
+
+    _html_path, text_path, manifest_path, digest = weekly_email.build_weekly_email_preview(
+        output_dir,
+        days=7,
+        run_date=date(2026, 9, 9),
+        source_report_dir=source_dir,
+    )
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    text = text_path.read_text(encoding="utf-8")
+
+    assert manifest["items_count"] == 2
+    assert manifest["external_send_ready"] is False
+    assert manifest["limited_signal_volume"] is True
+    assert digest["diagnostics"]["weekly_email_selection_source"] == "pipeline_selected_items"
+    assert "Adjust" in text
+    assert "Innovid" in text
+    assert "Old Context" not in text
+    assert "Legacy One" not in text
+
+
 def test_weekly_email_manifest_counts_distinct_companies_only(monkeypatch, tmp_path: Path) -> None:
     digest = {
         **_digest(),
@@ -862,6 +953,9 @@ def test_weekly_email_source_config_uses_wider_search_without_mutating_daily_con
             max_total_results_per_topic=10,
             max_total_results_per_layer=24,
             max_strategic_background_queries=3,
+            max_market_watch_queries=7,
+            max_results_per_market_watch_query=5,
+            max_total_results_per_market_watch=18,
             daily_total_budget_seconds=240,
         ),
         outputs=SimpleNamespace(daily_digest_target=4),
@@ -872,9 +966,12 @@ def test_weekly_email_source_config_uses_wider_search_without_mutating_daily_con
     assert weekly_config.search.max_age_hours == 336
     assert weekly_config.search.num_results_per_topic == 10
     assert weekly_config.search.max_total_results_per_topic == 14
-    assert weekly_config.search.max_total_results_per_layer == 40
+    assert weekly_config.search.max_total_results_per_layer == 60
     assert weekly_config.search.max_strategic_background_queries == 5
-    assert weekly_config.search.daily_total_budget_seconds == 300
+    assert weekly_config.search.max_market_watch_queries == 7
+    assert weekly_config.search.max_results_per_market_watch_query == 7
+    assert weekly_config.search.max_total_results_per_market_watch == 35
+    assert weekly_config.search.daily_total_budget_seconds == 420
     assert weekly_config.outputs.daily_digest_target == 5
     assert config.search.max_age_hours == 24
     assert config.search.num_results_per_topic == 8

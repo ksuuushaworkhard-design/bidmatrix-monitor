@@ -99,7 +99,7 @@ def _prefer_pipeline_selected_digest_items(
     output_date: date,
 ) -> dict[str, Any]:
     pipeline_items = _load_pipeline_selected_items(report_dir, days, output_date)
-    if len(pipeline_items) <= len(_top_items(digest)):
+    if not pipeline_items:
         return digest
 
     pipeline_items = _distinct_pipeline_company_items(pipeline_items)
@@ -143,13 +143,12 @@ def _load_pipeline_selected_items(report_dir: Path, days: int, output_date: date
         for key in (
             "daily_digest_items",
             "daily_signals",
+            "adjacent_watchlist",
             "top_news",
             "actually_new_today",
             "partner_signals",
             "competitor_moves",
-            "adjacent_watchlist",
             "fresh_weak_confidence",
-            "background_items",
         ):
             for item in data.get(key, []):
                 if isinstance(item, dict):
