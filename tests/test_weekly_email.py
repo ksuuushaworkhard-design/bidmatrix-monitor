@@ -285,6 +285,173 @@ def test_weekly_email_preview_prefers_pipeline_selected_digest_items(monkeypatch
     assert "Only One" not in text
 
 
+def test_weekly_email_preview_uses_distinct_companies_for_main_items(monkeypatch, tmp_path: Path) -> None:
+    source_dir = tmp_path / "source-reports"
+    output_dir = tmp_path / "reports"
+    source_dir.mkdir()
+    items = [
+        {
+            "company_or_topic": "Adjust",
+            "title": "Adjust published mobile ad fraud report",
+            "url": "https://www.adjust.com/blog/mobile-ad-fraud-2026/",
+            "source_domain": "adjust.com",
+            "what_happened": "Adjust published a mobile ad fraud report.",
+            "why_it_matters_for_bidmatrix": "Fraud prevention is being tied to performance protection.",
+            "content_angle": "Explain how traffic quality protects media budgets.",
+            "hot_topics": ["fraud"],
+        },
+        {
+            "company_or_topic": "Adjust",
+            "title": "Adjust added Snapchat attribution support",
+            "url": "https://www.adjust.com/blog/snap/",
+            "source_domain": "adjust.com",
+            "what_happened": "Adjust added Snapchat attribution support.",
+            "why_it_matters_for_bidmatrix": "Measurement partners are pushing real-time optimization hooks.",
+            "content_angle": "Talk about measurement that changes buying decisions.",
+            "hot_topics": ["measurement"],
+        },
+        {
+            "company_or_topic": "Adjust",
+            "title": "Adjust released Japan app benchmarks",
+            "url": "https://www.adjust.com/blog/topics/app-trends/",
+            "source_domain": "adjust.com",
+            "what_happened": "Adjust released Japan app benchmarks.",
+            "why_it_matters_for_bidmatrix": "Benchmarks are being used as sales enablement.",
+            "content_angle": "Use benchmark content to frame market maturity.",
+            "hot_topics": ["benchmarking"],
+        },
+        {
+            "company_or_topic": "Innovid",
+            "title": "Innovid launched NIVO AI assistant integration",
+            "url": "https://www.exchangewire.com/blog/2026/09/09/innovid-expands-nivo-with-meta-ads-mcp-integration/",
+            "source_domain": "exchangewire.com",
+            "what_happened": "Innovid integrated its NIVO AI assistant with Meta Ads.",
+            "why_it_matters_for_bidmatrix": "AI is moving closer to campaign operations.",
+            "content_angle": "Discuss AI that improves decisions, not just reporting speed.",
+            "hot_topics": ["AI"],
+        },
+        {
+            "company_or_topic": "AppsFlyer and Roku SRN Integration",
+            "title": "AppsFlyer and Roku launched SRN integration",
+            "url": "https://www.adexchanger.com/tv/appsflyer-and-rokus-new-srn-integration-will-shed-light-on-ctv-campaign-impact/",
+            "source_domain": "adexchanger.com",
+            "what_happened": "AppsFlyer and Roku launched a CTV campaign measurement integration.",
+            "why_it_matters_for_bidmatrix": "CTV is being framed around performance proof.",
+            "content_angle": "Explain measurable CTV for app marketers.",
+            "hot_topics": ["CTV", "measurement"],
+        },
+        {
+            "company_or_topic": "Moloco",
+            "title": "Moloco launched agency partner program",
+            "url": "https://digiday.com/media-buying/moloco-launches-an-agency-partner-program/",
+            "source_domain": "digiday.com",
+            "what_happened": "Moloco launched an agency partner program.",
+            "why_it_matters_for_bidmatrix": "Performance platforms are using agencies as distribution.",
+            "content_angle": "Talk about partner-led growth.",
+            "hot_topics": ["partner"],
+        },
+        {
+            "company_or_topic": "Unity",
+            "title": "Unity Studio adds real-time collaboration",
+            "url": "https://unity.com/blog/unity-studio-real-time-collaboration",
+            "source_domain": "unity.com",
+            "what_happened": "Unity Studio added real-time collaboration.",
+            "why_it_matters_for_bidmatrix": "Creative workflows are becoming growth infrastructure.",
+            "content_angle": "Discuss creative workflow speed.",
+            "hot_topics": ["creative"],
+        },
+    ]
+    (source_dir / "bidmatrix-monitor-2026-09-09-curated.json").write_text(
+        json.dumps({"daily_digest_items": items}),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        weekly_email,
+        "build_weekly_digest",
+        lambda report_dir, days: {
+            **_digest(),
+            "what_actually_happened": [
+                {
+                    "company": "Only One",
+                    "event": "Only one item survived the older weekly selector.",
+                    "source": "example.com",
+                    "url": "https://example.com/one",
+                }
+            ],
+            "limited_signal_volume": True,
+            "diagnostics": {"weekly_selected_items_count": 1},
+        },
+    )
+
+    _html_path, text_path, manifest_path, digest = weekly_email.build_weekly_email_preview(
+        output_dir,
+        days=7,
+        run_date=date(2026, 9, 9),
+        source_report_dir=source_dir,
+    )
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    companies = [item["company"] for item in manifest["selected_items"]]
+    text = text_path.read_text(encoding="utf-8")
+
+    assert manifest["items_count"] == 5
+    assert len({weekly_email._company_dedupe_key(company) for company in companies}) == 5
+    assert companies.count("Adjust") == 1
+    assert "This week's clearest moves came from Adjust, Innovid, and AppsFlyer and Roku SRN Integration." in text
+    assert digest["diagnostics"]["weekly_email_selected_items_count"] == 5
+
+
+def test_weekly_email_manifest_counts_distinct_companies_only(monkeypatch, tmp_path: Path) -> None:
+    digest = {
+        **_digest(),
+        "what_actually_happened": [
+            {
+                "company": "Adjust",
+                "event": "published a fraud report.",
+                "source": "adjust.com",
+                "url": "https://www.adjust.com/fraud",
+            },
+            {
+                "company": "Adjust",
+                "event": "added Snapchat attribution support.",
+                "source": "adjust.com",
+                "url": "https://www.adjust.com/snap",
+            },
+            {
+                "company": "AppsFlyer",
+                "event": "released fraud controls.",
+                "source": "appsflyer.com",
+                "url": "https://www.appsflyer.com/fraud",
+            },
+        ],
+    }
+    monkeypatch.setattr(weekly_email, "build_weekly_digest", lambda report_dir, days: digest)
+
+    _html_path, text_path, manifest_path, _digest_result = weekly_email.build_weekly_email_preview(
+        tmp_path,
+        run_date=date(2026, 9, 9),
+    )
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    text = text_path.read_text(encoding="utf-8")
+
+    assert manifest["items_count"] == 2
+    assert manifest["external_send_ready"] is False
+    assert text.count("Adjust -") == 1
+    assert "Adjust, Adjust" not in text
+
+
+def test_weekly_email_recovers_company_from_generic_topic_subject() -> None:
+    item = {
+        "company_or_topic": "AI Creative Automation",
+        "mentioned_companies": ["OpenAI", "AppLovin"],
+        "title": "OpenAI and AppLovin expand AI creative automation suites",
+    }
+
+    assert weekly_email._company_from_pipeline_item(item) == "OpenAI"
+
+
 def test_weekly_email_preview_cli_does_not_deliver(monkeypatch, tmp_path: Path, capsys) -> None:
     html_path = tmp_path / "weekly-email-preview-2026-08-14.html"
     text_path = tmp_path / "weekly-email-preview-2026-08-14.txt"

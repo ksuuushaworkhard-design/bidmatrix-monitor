@@ -4,6 +4,7 @@ from datetime import date, datetime, timedelta, timezone
 import html
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -101,6 +102,7 @@ def _prefer_pipeline_selected_digest_items(
     if len(pipeline_items) <= len(_top_items(digest)):
         return digest
 
+    pipeline_items = _distinct_pipeline_company_items(pipeline_items)
     developments = _email_developments_from_pipeline_items(pipeline_items[:WEEKLY_EMAIL_TARGET_ITEMS])
     if not developments:
         return digest
@@ -191,6 +193,19 @@ def _dedupe_pipeline_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return selected
 
 
+def _distinct_pipeline_company_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    selected: list[dict[str, Any]] = []
+    seen_companies: set[str] = set()
+    for item in items:
+        company_key = _company_dedupe_key(_company_from_pipeline_item(item))
+        if company_key and company_key in seen_companies:
+            continue
+        selected.append(item)
+        if company_key:
+            seen_companies.add(company_key)
+    return selected
+
+
 def _email_developments_from_pipeline_items(items: list[dict[str, Any]]) -> list[dict[str, str]]:
     developments = []
     for item in items:
@@ -232,12 +247,34 @@ def _email_developments_from_pipeline_items(items: list[dict[str, Any]]) -> list
 
 def _company_from_pipeline_item(item: dict[str, Any]) -> str:
     company = str(item.get("company_or_topic") or "").strip()
-    if company:
-        return _clean_sentence(company, 80).rstrip(".")
     companies = [str(value).strip() for value in item.get("mentioned_companies", []) if str(value).strip()]
+    if company and not _looks_like_topic_subject(company):
+        return _clean_sentence(company, 80).rstrip(".")
     if companies:
         return _clean_sentence(companies[0], 80).rstrip(".")
+    if company:
+        return _clean_sentence(company, 80).rstrip(".")
     return _clean_sentence(str(item.get("title") or "Company").split(" ", 1)[0], 80).rstrip(".")
+
+
+def _looks_like_topic_subject(value: str) -> bool:
+    text = str(value or "").strip().lower()
+    if not text:
+        return False
+    if "/" in text:
+        return True
+    topic_terms = (
+        "automation",
+        "measurement",
+        "media buying",
+        "creative",
+        "agentic",
+        "attribution",
+        "fraud",
+        "privacy",
+        "programmatic",
+    )
+    return any(term in text for term in topic_terms)
 
 
 def _source_from_pipeline_item(item: dict[str, Any]) -> str:
@@ -541,7 +578,27 @@ def _item_html(item: dict[str, Any], index: int) -> str:
 
 def _top_items(digest: dict[str, Any]) -> list[dict[str, Any]]:
     items = digest.get("what_actually_happened") or []
-    return [item for item in items if isinstance(item, dict)]
+    return _distinct_company_items([item for item in items if isinstance(item, dict)])
+
+
+def _distinct_company_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    selected: list[dict[str, Any]] = []
+    seen_companies: set[str] = set()
+    for item in items:
+        company_key = _company_dedupe_key(_company(item))
+        if company_key and company_key in seen_companies:
+            continue
+        selected.append(item)
+        if company_key:
+            seen_companies.add(company_key)
+    return selected
+
+
+def _company_dedupe_key(company: str) -> str:
+    normalized = html.unescape(str(company or "")).lower().replace("&", " and ")
+    normalized = re.split(r"\s+(?:and|with|x)\s+", normalized, maxsplit=1)[0]
+    normalized = re.sub(r"[^a-z0-9]+", " ", normalized).strip()
+    return " ".join(normalized.split())
 
 
 def _logo_html() -> str:
