@@ -130,7 +130,8 @@ def main() -> None:
             f"to={result['to']} "
             f"from={result['from']} "
             f"subject={result['subject']} "
-            f"manifest={result['manifest_path']}"
+            f"manifest={result['manifest_path']} "
+            f"skip_reason={result.get('skip_reason', '')}"
         )
         return
 
@@ -244,7 +245,8 @@ def main() -> None:
             f"from={result['from']} "
             f"subject={result['subject']} "
             f"items={result.get('items_count')} "
-            f"external_send_ready={result.get('external_send_ready')}"
+            f"external_send_ready={result.get('external_send_ready')} "
+            f"skip_reason={result.get('skip_reason', '')}"
         )
         return
 
@@ -347,6 +349,7 @@ def _refresh_weekly_email_source_report(config, report_dir: Path, days: int = 7,
     lookback_hours = getattr(getattr(weekly_config, "search", None), "max_age_hours", None)
     print(f"WEEKLY_EMAIL_SOURCE_REFRESH_STARTED lookback_hours={lookback_hours}")
     report, client = _build_daily_report(weekly_config, debug_exa=debug_exa)
+    report = _expand_weekly_email_source_report_if_needed(report, client, weekly_config)
     markdown_path, json_path, curated_json_path = write_report(report, report_dir)
     audit_json_path = write_daily_audit_report(report, report_dir)
     print(f"Wrote {markdown_path}")
@@ -361,23 +364,92 @@ def _refresh_weekly_email_source_report(config, report_dir: Path, days: int = 7,
     _print_pipeline_state(report.diagnostics)
 
 
+def _expand_weekly_email_source_report_if_needed(report, client, config):
+    selected_count = int(report.diagnostics.get("selected_digest_items_count", 0) or 0)
+    target_count = 5
+    if selected_count >= target_count:
+        return report
+    if not client.should_run_market_watch_recent():
+        print(
+            "WEEKLY_EMAIL_SOURCE_EXPANSION_SKIPPED "
+            f"reason=market_watch_unavailable selected_digest_items_count={selected_count} target={target_count}"
+        )
+        return report
+
+    print(
+        "WEEKLY_EMAIL_SOURCE_EXPANSION_STARTED "
+        f"reason=thin_digest selected_digest_items_count={selected_count} target={target_count}"
+    )
+    items = list(report.raw_items or report.items)
+    exa_errors = list(report.exa_errors or [])
+    before_count = len(items)
+    try:
+        items.extend(client.search_market_watch_recent())
+    except Exception as exc:
+        message = f"weekly_email_market_watch_recent: {exc}"
+        exa_errors.append(message)
+        print(f"Exa error for weekly_email_market_watch_recent: {exc}")
+    exa_errors.extend(client.pop_errors())
+    expanded = build_report(items, config, exa_errors=exa_errors, exa_meta=client.collection_stats())
+    print(
+        "WEEKLY_EMAIL_SOURCE_EXPANSION_FINISHED "
+        f"added_raw_items={max(0, len(items) - before_count)} "
+        f"selected_digest_items_count={expanded.diagnostics.get('selected_digest_items_count', 0)}"
+    )
+    return expanded
+
+
 def _weekly_email_source_config(config, days: int):
     search = getattr(config, "search", None)
     if search is None:
         return config
 
-    weekly_hours = max(1, int(days)) * 24
+    weekly_hours = max(14, int(days)) * 24
     current_hours = getattr(search, "max_age_hours", None)
     if current_hours is not None:
         weekly_hours = max(weekly_hours, int(current_hours))
 
+    outputs = getattr(config, "outputs", None)
+
     if is_dataclass(config) and is_dataclass(search):
-        return replace(config, search=replace(search, max_age_hours=weekly_hours))
+        weekly_search = replace(
+            search,
+            max_age_hours=weekly_hours,
+            num_results_per_topic=max(int(getattr(search, "num_results_per_topic", 8)), 10),
+            max_total_results_per_topic=max(int(getattr(search, "max_total_results_per_topic", 10)), 14),
+            max_total_results_per_layer=max(int(getattr(search, "max_total_results_per_layer", 24)), 40),
+            max_strategic_background_queries=max(int(getattr(search, "max_strategic_background_queries", 3)), 5),
+            daily_total_budget_seconds=max(int(getattr(search, "daily_total_budget_seconds", 240)), 300),
+        )
+        if is_dataclass(outputs):
+            return replace(
+                config,
+                search=weekly_search,
+                outputs=replace(
+                    outputs,
+                    daily_digest_target=max(int(getattr(outputs, "daily_digest_target", 4)), 5),
+                ),
+            )
+        return replace(
+            config,
+            search=weekly_search,
+        )
 
     search_values = dict(vars(search))
     search_values["max_age_hours"] = weekly_hours
+    search_values["num_results_per_topic"] = max(int(search_values.get("num_results_per_topic", 8)), 10)
+    search_values["max_total_results_per_topic"] = max(int(search_values.get("max_total_results_per_topic", 10)), 14)
+    search_values["max_total_results_per_layer"] = max(int(search_values.get("max_total_results_per_layer", 24)), 40)
+    search_values["max_strategic_background_queries"] = max(
+        int(search_values.get("max_strategic_background_queries", 3)), 5
+    )
+    search_values["daily_total_budget_seconds"] = max(int(search_values.get("daily_total_budget_seconds", 240)), 300)
     config_values = dict(vars(config))
     config_values["search"] = SimpleNamespace(**search_values)
+    if outputs is not None:
+        output_values = dict(vars(outputs))
+        output_values["daily_digest_target"] = max(int(output_values.get("daily_digest_target", 4)), 5)
+        config_values["outputs"] = SimpleNamespace(**output_values)
     return SimpleNamespace(**config_values)
 
 

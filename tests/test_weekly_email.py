@@ -142,11 +142,147 @@ def test_build_weekly_email_preview_writes_html_text_and_manifest(monkeypatch, t
     assert manifest["recommended_audience"] == "internal_test"
     assert manifest["run_date"] == "2026-08-14"
     assert manifest["items_count"] == 2
-    assert manifest["minimum_external_items"] == 3
+    assert manifest["minimum_external_items"] == 5
     assert manifest["days"] == 7
     assert manifest["preview_files"]["html"] == str(html_path)
     assert manifest["preview_files"]["text"] == str(text_path)
     assert digest["email_preview"] == manifest
+
+
+def test_build_weekly_email_preview_uses_requested_run_date_when_digest_has_no_date(
+    monkeypatch, tmp_path: Path
+) -> None:
+    digest_without_date = dict(_digest())
+    digest_without_date.pop("run_date")
+    monkeypatch.setattr(weekly_email, "build_weekly_digest", lambda report_dir, days: digest_without_date)
+
+    _html_path, text_path, manifest_path, digest = weekly_email.build_weekly_email_preview(
+        tmp_path,
+        days=7,
+        run_date=date(2026, 9, 7),
+    )
+
+    assert digest["run_date"] == "2026-09-07"
+    assert json.loads(manifest_path.read_text(encoding="utf-8"))["run_date"] == "2026-09-07"
+    assert "BidMatrix Weekly Growth Brief - 2026-09-07" in text_path.read_text(encoding="utf-8")
+
+
+def test_weekly_email_preview_prefers_pipeline_selected_digest_items(monkeypatch, tmp_path: Path) -> None:
+    source_dir = tmp_path / "source-reports"
+    output_dir = tmp_path / "reports"
+    source_dir.mkdir()
+    items = [
+        {
+            "company_or_topic": "AppsFlyer",
+            "title": "AppsFlyer released fraud report",
+            "url": "https://www.appsflyer.com/resources/reports/state-fraud-marketers/",
+            "source_domain": "appsflyer.com",
+            "published_date": "2026-08-14",
+            "signal_type": "fraud_quality",
+            "what_happened": "AppsFlyer released a fraud report for mobile marketers.",
+            "why_it_matters_for_bidmatrix": "Supports positioning around traffic quality and verified growth.",
+            "content_angle": "Use this to explain why fraud proof matters for app campaigns.",
+            "hot_topics": ["fraud", "traffic quality"],
+        },
+        {
+            "company_or_topic": "Moloco",
+            "title": "Moloco launched agency partner program",
+            "url": "https://digiday.com/media-buying/moloco-launches-an-agency-partner-program/",
+            "source_domain": "digiday.com",
+            "published_date": "2026-08-13",
+            "signal_type": "partnership",
+            "what_happened": "Moloco launched an agency partner program to expand beyond mobile programmatic.",
+            "why_it_matters_for_bidmatrix": "Shows performance platforms using agencies as a distribution path.",
+            "content_angle": "Use this to discuss partner-led growth in performance advertising.",
+            "hot_topics": ["partner", "programmatic"],
+        },
+        {
+            "company_or_topic": "AppLovin",
+            "title": "AppLovin expands beyond gaming advertisers",
+            "url": "https://www.adexchanger.com/the-big-story/applovins-play-to-reach-non-gaming-advertisers/",
+            "source_domain": "adexchanger.com",
+            "published_date": "2026-08-12",
+            "signal_type": "platform_update",
+            "what_happened": "AppLovin expanded its AI-driven performance platform beyond gaming advertisers.",
+            "why_it_matters_for_bidmatrix": "Shows app-growth platforms chasing broader ecommerce budgets.",
+            "content_angle": "Use this to discuss why AI ad buying is moving beyond gaming.",
+            "hot_topics": ["AI", "app growth"],
+        },
+        {
+            "company_or_topic": "Tatari",
+            "title": "Tatari launched AppsFlyer TV measurement integration",
+            "url": "https://www.businessofapps.com/news/mobile-app-marketers-now-have-a-choice-in-how-they-measure-tv/",
+            "source_domain": "businessofapps.com",
+            "published_date": "2026-08-11",
+            "signal_type": "partnership",
+            "what_happened": "Tatari launched a TV measurement integration with AppsFlyer.",
+            "why_it_matters_for_bidmatrix": "Connects CTV measurement to transparent performance proof.",
+            "content_angle": "Use this to explain why measurable CTV matters for app marketers.",
+            "hot_topics": ["CTV", "measurement"],
+        },
+    ]
+    source_payload = {
+        "run_date": "2026-08-14",
+        "daily_digest_items": items,
+        "top_news": [
+            *items,
+            {
+                "company_or_topic": "Unity",
+                "title": "Unity Studio adds real-time collaboration",
+                "url": "https://unity.com/blog/unity-studio-real-time-collaboration",
+                "source_domain": "unity.com",
+                "published_date": "2026-08-10",
+                "signal_type": "platform_update",
+                "what_happened": "Unity Studio added real-time collaboration for creative and production teams.",
+                "why_it_matters_for_bidmatrix": "Shows app platforms packaging workflow speed as a growth advantage.",
+                "content_angle": "Use this to discuss why creative workflows are becoming part of growth infrastructure.",
+                "hot_topics": ["creative", "workflow"],
+            },
+        ],
+    }
+    (source_dir / "bidmatrix-monitor-2026-08-14-curated.json").write_text(
+        json.dumps(source_payload),
+        encoding="utf-8",
+    )
+
+    def fake_build_weekly_digest(report_dir: Path, days: int) -> dict:
+        return {
+            **_digest(),
+            "what_actually_happened": [
+                {
+                    "company": "Only One",
+                    "event": "Only one item survived the older weekly selector.",
+                    "source": "example.com",
+                    "url": "https://example.com/one",
+                }
+            ],
+            "limited_signal_volume": True,
+            "diagnostics": {"weekly_selected_items_count": 1},
+        }
+
+    monkeypatch.setattr(weekly_email, "build_weekly_digest", fake_build_weekly_digest)
+
+    _html_path, text_path, manifest_path, digest = weekly_email.build_weekly_email_preview(
+        output_dir,
+        days=7,
+        run_date=date(2026, 8, 14),
+        source_report_dir=source_dir,
+    )
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    text = text_path.read_text(encoding="utf-8")
+
+    assert manifest["items_count"] == 5
+    assert manifest["external_send_ready"] is True
+    assert manifest["limited_signal_volume"] is False
+    assert digest["diagnostics"]["weekly_email_selection_source"] == "pipeline_selected_items"
+    assert digest["diagnostics"]["weekly_email_base_weekly_items_count"] == 1
+    assert "AppsFlyer" in text
+    assert "Moloco" in text
+    assert "AppLovin" in text
+    assert "Tatari" in text
+    assert "Unity" in text
+    assert "Only One" not in text
 
 
 def test_weekly_email_preview_cli_does_not_deliver(monkeypatch, tmp_path: Path, capsys) -> None:
@@ -156,7 +292,7 @@ def test_weekly_email_preview_cli_does_not_deliver(monkeypatch, tmp_path: Path, 
     digest = {
         "email_preview": {
             "email_subject": "BidMatrix Weekly Growth Brief: AI",
-            "items_count": 3,
+            "items_count": 5,
             "external_send_ready": True,
             "approval_required": True,
         }
@@ -193,24 +329,22 @@ def test_weekly_email_preview_cli_does_not_deliver(monkeypatch, tmp_path: Path, 
     assert "WEEKLY_EMAIL_PREVIEW subject=BidMatrix Weekly Growth Brief: AI" in output
 
 
-def _preview_files(tmp_path: Path) -> Path:
+def _preview_files(tmp_path: Path, manifest_overrides: dict | None = None) -> Path:
     html_path = tmp_path / "weekly-email-preview-2026-08-14.html"
     text_path = tmp_path / "weekly-email-preview-2026-08-14.txt"
     manifest_path = tmp_path / "weekly-email-preview-2026-08-14.json"
+    manifest = {
+        "email_subject": "BidMatrix Weekly Growth Brief: AI",
+        "approval_required": True,
+        "approved": False,
+        "recommended_audience": "internal_test",
+        "preview_files": {"html": str(html_path), "text": str(text_path)},
+    }
+    if manifest_overrides:
+        manifest.update(manifest_overrides)
     html_path.write_text("<p>Hello</p>", encoding="utf-8")
     text_path.write_text("Hello\n", encoding="utf-8")
-    manifest_path.write_text(
-        json.dumps(
-            {
-                "email_subject": "BidMatrix Weekly Growth Brief: AI",
-                "approval_required": True,
-                "approved": False,
-                "recommended_audience": "internal_test",
-                "preview_files": {"html": str(html_path), "text": str(text_path)},
-            }
-        ),
-        encoding="utf-8",
-    )
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     return manifest_path
 
 
@@ -246,7 +380,15 @@ def test_weekly_email_test_send_dry_run_uses_manifest_and_env(monkeypatch, tmp_p
 
 
 def test_weekly_email_test_send_uses_resend_payload(monkeypatch, tmp_path: Path) -> None:
-    manifest_path = _preview_files(tmp_path)
+    manifest_path = _preview_files(
+        tmp_path,
+        {
+            "items_count": 5,
+            "minimum_external_items": 5,
+            "limited_signal_volume": False,
+            "external_send_ready": True,
+        },
+    )
     monkeypatch.setenv("RESEND_API_KEY", "re_test")
     monkeypatch.setenv("WEEKLY_EMAIL_FROM", "BidMatrix <weekly@updates.bid-matrix.com>")
     monkeypatch.setenv(
@@ -275,6 +417,35 @@ def test_weekly_email_test_send_uses_resend_payload(monkeypatch, tmp_path: Path)
     assert result["to"] == "ksenia@bid-matrix.com, mark@bid-matrix.com, nastya@bid-matrix.com"
 
 
+def test_weekly_email_test_send_skips_when_items_are_below_external_minimum(monkeypatch, tmp_path: Path) -> None:
+    manifest_path = _preview_files(
+        tmp_path,
+        {
+            "items_count": 1,
+            "minimum_external_items": 5,
+            "limited_signal_volume": True,
+            "external_send_ready": False,
+        },
+    )
+
+    monkeypatch.setattr(
+        weekly_email,
+        "_send_resend_email",
+        lambda payload: pytest.fail("thin weekly email must not call Resend"),
+    )
+    monkeypatch.delenv("WEEKLY_EMAIL_TEST_TO", raising=False)
+    monkeypatch.delenv("WEEKLY_EMAIL_FROM", raising=False)
+
+    result = weekly_email.send_weekly_email_test(manifest_path, env_path=tmp_path / "missing.env")
+
+    assert result["mode"] == "skipped"
+    assert result["skip_reason"] == "insufficient_items:1_of_5"
+    assert result["items_count"] == 1
+    assert result["minimum_external_items"] == 5
+    assert result["external_send_ready"] is False
+    assert result["recipients"] == []
+
+
 def test_weekly_email_test_run_builds_preview_and_sends(monkeypatch, tmp_path: Path) -> None:
     output_dir = tmp_path / "reports"
     source_dir = tmp_path / "source"
@@ -289,7 +460,7 @@ def test_weekly_email_test_run_builds_preview_and_sends(monkeypatch, tmp_path: P
             output_dir / "weekly-email-preview-2026-08-14.html",
             output_dir / "weekly-email-preview-2026-08-14.txt",
             manifest_path,
-            {"email_preview": {"items_count": 3, "external_send_ready": True}},
+            {"email_preview": {"items_count": 5, "external_send_ready": True}},
         )
 
     def fake_send(manifest_path, dry_run=False, env_path=None):
@@ -317,9 +488,45 @@ def test_weekly_email_test_run_builds_preview_and_sends(monkeypatch, tmp_path: P
     assert calls[0] == ("preview", (output_dir, 7, source_dir))
     assert calls[1][0] == "send"
     assert result["mode"] == "dry_run"
-    assert result["items_count"] == 3
+    assert result["items_count"] == 5
     assert result["external_send_ready"] is True
     assert result["recipients"] == ["ksenia@bid-matrix.com", "mark@bid-matrix.com", "nastya@bid-matrix.com"]
+
+
+def test_weekly_email_test_run_skips_thin_preview_without_resend(monkeypatch, tmp_path: Path) -> None:
+    output_dir = tmp_path / "reports"
+    output_dir.mkdir()
+    manifest_path = _preview_files(
+        output_dir,
+        {
+            "items_count": 1,
+            "minimum_external_items": 5,
+            "limited_signal_volume": True,
+            "external_send_ready": False,
+        },
+    )
+
+    def fake_preview(report_dir, days=7, source_report_dir=None):
+        return (
+            output_dir / "weekly-email-preview-2026-08-14.html",
+            output_dir / "weekly-email-preview-2026-08-14.txt",
+            manifest_path,
+            {"email_preview": {"items_count": 1, "external_send_ready": False}},
+        )
+
+    monkeypatch.setattr(weekly_email, "build_weekly_email_preview", fake_preview)
+    monkeypatch.setattr(
+        weekly_email,
+        "_send_resend_email",
+        lambda payload: pytest.fail("thin weekly email test-run must not call Resend"),
+    )
+
+    result = weekly_email.build_and_send_weekly_email_test_run(output_dir)
+
+    assert result["mode"] == "skipped"
+    assert result["skip_reason"] == "insufficient_items:1_of_5"
+    assert result["items_count"] == 1
+    assert result["external_send_ready"] is False
 
 
 def test_weekly_email_send_test_cli_does_not_load_config_or_deliver(monkeypatch, capsys) -> None:
@@ -380,7 +587,7 @@ def test_weekly_email_test_run_cli_builds_and_sends_without_v1_delivery(
             "html_path": str(tmp_path / "weekly-email-preview-2026-08-14.html"),
             "text_path": str(tmp_path / "weekly-email-preview-2026-08-14.txt"),
             "manifest_path": str(tmp_path / "weekly-email-preview-2026-08-14.json"),
-            "items_count": 3,
+            "items_count": 5,
             "external_send_ready": True,
         }
 
@@ -428,7 +635,7 @@ def test_weekly_email_test_run_can_refresh_source_report_without_delivery(
         search=SimpleNamespace(max_age_hours=24),
     )
     fake_client = SimpleNamespace(print_collection_summary=lambda: calls.append("print_collection_summary"))
-    fake_report = SimpleNamespace(diagnostics={"selected_digest_items_count": 3})
+    fake_report = SimpleNamespace(diagnostics={"selected_digest_items_count": 5})
 
     def fail_delivery(*args, **kwargs):
         raise AssertionError("weekly email source refresh must not call Telegram delivery")
@@ -443,7 +650,7 @@ def test_weekly_email_test_run_can_refresh_source_report_without_delivery(
             "html_path": str(tmp_path / "weekly-email-preview-2026-08-31.html"),
             "text_path": str(tmp_path / "weekly-email-preview-2026-08-31.txt"),
             "manifest_path": str(tmp_path / "weekly-email-preview-2026-08-31.json"),
-            "items_count": 3,
+            "items_count": 5,
             "external_send_ready": True,
         }
 
@@ -472,12 +679,99 @@ def test_weekly_email_test_run_can_refresh_source_report_without_delivery(
 
     output = capsys.readouterr().out
     assert calls == ["print_collection_summary", "email_test_run"]
-    assert seen["max_age_hours"] == 168
+    assert seen["max_age_hours"] == 336
     assert fake_config.search.max_age_hours == 24
     assert "WEEKLY_EMAIL_SOURCE_REFRESH_STARTED" in output
-    assert "lookback_hours=168" in output
+    assert "lookback_hours=336" in output
     assert "WEEKLY_EMAIL_SOURCE_REFRESH_WRITTEN" in output
     assert "WEEKLY_EMAIL_TEST_RUN_FINISHED mode=dry_run" in output
+
+
+def test_weekly_email_source_config_uses_wider_search_without_mutating_daily_config() -> None:
+    config = SimpleNamespace(
+        search=SimpleNamespace(
+            max_age_hours=24,
+            num_results_per_topic=8,
+            max_total_results_per_topic=10,
+            max_total_results_per_layer=24,
+            max_strategic_background_queries=3,
+            daily_total_budget_seconds=240,
+        ),
+        outputs=SimpleNamespace(daily_digest_target=4),
+    )
+
+    weekly_config = cli_module._weekly_email_source_config(config, days=7)
+
+    assert weekly_config.search.max_age_hours == 336
+    assert weekly_config.search.num_results_per_topic == 10
+    assert weekly_config.search.max_total_results_per_topic == 14
+    assert weekly_config.search.max_total_results_per_layer == 40
+    assert weekly_config.search.max_strategic_background_queries == 5
+    assert weekly_config.search.daily_total_budget_seconds == 300
+    assert weekly_config.outputs.daily_digest_target == 5
+    assert config.search.max_age_hours == 24
+    assert config.search.num_results_per_topic == 8
+    assert config.outputs.daily_digest_target == 4
+
+
+def test_weekly_email_source_refresh_expands_market_watch_when_digest_is_thin(monkeypatch) -> None:
+    base_item = {"title": "One fresh source", "url": "https://example.com/one"}
+    extra_items = [
+        {"title": "Second weekly source", "url": "https://example.com/two"},
+        {"title": "Third weekly source", "url": "https://example.com/three"},
+        {"title": "Fourth weekly source", "url": "https://example.com/four"},
+        {"title": "Fifth weekly source", "url": "https://example.com/five"},
+    ]
+    report = SimpleNamespace(
+        diagnostics={"selected_digest_items_count": 1},
+        raw_items=[base_item],
+        items=[],
+        exa_errors=[],
+    )
+    client_calls: list[str] = []
+
+    class FakeClient:
+        def should_run_market_watch_recent(self):
+            client_calls.append("should_run_market_watch_recent")
+            return True
+
+        def search_market_watch_recent(self):
+            client_calls.append("search_market_watch_recent")
+            return extra_items
+
+        def pop_errors(self):
+            return []
+
+        def collection_stats(self):
+            return {"exa_total_queries": 7}
+
+    def fake_build_report(items, config, exa_errors=None, exa_meta=None):
+        assert items == [base_item, *extra_items]
+        assert exa_errors == []
+        assert exa_meta == {"exa_total_queries": 7}
+        return SimpleNamespace(diagnostics={"selected_digest_items_count": 5}, raw_items=items, items=items, exa_errors=[])
+
+    monkeypatch.setattr(cli_module, "build_report", fake_build_report)
+
+    expanded = cli_module._expand_weekly_email_source_report_if_needed(report, FakeClient(), SimpleNamespace())
+
+    assert client_calls == ["should_run_market_watch_recent", "search_market_watch_recent"]
+    assert expanded.diagnostics["selected_digest_items_count"] == 5
+
+
+def test_weekly_email_source_refresh_does_not_expand_when_digest_has_enough_items(monkeypatch) -> None:
+    report = SimpleNamespace(
+        diagnostics={"selected_digest_items_count": 5},
+        raw_items=[],
+        items=[],
+        exa_errors=[],
+    )
+
+    class FakeClient:
+        def should_run_market_watch_recent(self):
+            raise AssertionError("market watch should not run when weekly email already has enough items")
+
+    assert cli_module._expand_weekly_email_source_report_if_needed(report, FakeClient(), SimpleNamespace()) is report
 
 
 def test_weekly_email_github_workflow_runs_monday_noon_moscow_without_telegram() -> None:

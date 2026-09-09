@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 import html
 import json
 import os
@@ -18,6 +18,9 @@ class WeeklyEmailError(RuntimeError):
     """Raised when weekly email preview or test delivery cannot continue."""
 
 
+WEEKLY_EMAIL_TARGET_ITEMS = 5
+
+
 def build_weekly_email_preview(
     report_dir: str | Path,
     days: int = 7,
@@ -31,7 +34,8 @@ def build_weekly_email_preview(
 
     digest_source_dir = Path(source_report_dir) if source_report_dir else output_dir
     digest = build_weekly_digest(digest_source_dir, days)
-    digest = {**digest, "email_subject": weekly_email_subject(digest)}
+    digest = _prefer_pipeline_selected_digest_items(digest, digest_source_dir, days, output_date)
+    digest = {**digest, "run_date": output_date.isoformat(), "email_subject": weekly_email_subject(digest)}
 
     stem = f"weekly-email-preview-{output_date.isoformat()}"
     html_path = output_dir / f"{stem}.html"
@@ -55,7 +59,7 @@ def build_weekly_email_manifest(
 ) -> dict[str, Any]:
     items = _top_items(digest)
     items_count = len(items)
-    minimum_external_items = 3
+    minimum_external_items = WEEKLY_EMAIL_TARGET_ITEMS
     external_send_ready = items_count >= minimum_external_items and not bool(digest.get("limited_signal_volume"))
     return {
         "status": "needs_review",
@@ -82,9 +86,206 @@ def build_weekly_email_manifest(
                 "event": _event(item),
                 "source": _url_or_source(item),
             }
-            for item in items[:5]
+            for item in items[:WEEKLY_EMAIL_TARGET_ITEMS]
         ],
     }
+
+
+def _prefer_pipeline_selected_digest_items(
+    digest: dict[str, Any],
+    report_dir: Path,
+    days: int,
+    output_date: date,
+) -> dict[str, Any]:
+    pipeline_items = _load_pipeline_selected_items(report_dir, days, output_date)
+    if len(pipeline_items) <= len(_top_items(digest)):
+        return digest
+
+    developments = _email_developments_from_pipeline_items(pipeline_items[:WEEKLY_EMAIL_TARGET_ITEMS])
+    if not developments:
+        return digest
+
+    diagnostics = dict(digest.get("diagnostics") or {})
+    diagnostics.update(
+        {
+            "weekly_email_selection_source": "pipeline_selected_items",
+            "weekly_email_selected_items_count": len(developments),
+            "weekly_email_base_weekly_items_count": len(_top_items(digest)),
+            "weekly_email_target_items": WEEKLY_EMAIL_TARGET_ITEMS,
+        }
+    )
+    return {
+        **digest,
+        "item_count": len(developments),
+        "limited_signal_volume": len(developments) < WEEKLY_EMAIL_TARGET_ITEMS,
+        "week_in_one_line": _email_week_in_one_line(developments),
+        "what_actually_happened": developments,
+        "why_it_matters_for_bidmatrix": _unique_text(
+            [_clean_sentence(item.get("why_it_matters") or item.get("market_context") or "", 220) for item in developments]
+        )[:2],
+        "diagnostics": diagnostics,
+    }
+
+
+def _load_pipeline_selected_items(report_dir: Path, days: int, output_date: date) -> list[dict[str, Any]]:
+    cutoff = output_date - timedelta(days=max(1, days) - 1)
+    selected: list[dict[str, Any]] = []
+    for path in sorted(report_dir.glob("bidmatrix-monitor-*-curated.json"), reverse=True):
+        report_date = _date_from_daily_curated_filename(path)
+        if report_date is None or report_date < cutoff or report_date > output_date:
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        for key in (
+            "daily_digest_items",
+            "daily_signals",
+            "top_news",
+            "actually_new_today",
+            "partner_signals",
+            "competitor_moves",
+            "adjacent_watchlist",
+            "fresh_weak_confidence",
+            "background_items",
+        ):
+            for item in data.get(key, []):
+                if isinstance(item, dict):
+                    enriched = dict(item)
+                    enriched.setdefault("_weekly_email_source_report", str(path))
+                    enriched.setdefault("_weekly_email_source_section", key)
+                    selected.append(enriched)
+    return _dedupe_pipeline_items(selected)
+
+
+def _date_from_daily_curated_filename(path: Path) -> date | None:
+    prefix = "bidmatrix-monitor-"
+    suffix = "-curated.json"
+    name = path.name
+    if not name.startswith(prefix) or not name.endswith(suffix):
+        return None
+    try:
+        return datetime.strptime(name[len(prefix) : -len(suffix)], "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def _dedupe_pipeline_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    selected: list[dict[str, Any]] = []
+    seen_urls: set[str] = set()
+    seen_company_topics: set[tuple[str, str]] = set()
+    for item in items:
+        url = str(item.get("url") or item.get("source_url") or "").split("?", 1)[0].rstrip("/").lower()
+        company = _company_from_pipeline_item(item).lower()
+        topic = _topic_key(item)
+        key = (company, topic)
+        if url and url in seen_urls:
+            continue
+        if company and topic and key in seen_company_topics:
+            continue
+        selected.append(item)
+        if url:
+            seen_urls.add(url)
+        if company and topic:
+            seen_company_topics.add(key)
+    return selected
+
+
+def _email_developments_from_pipeline_items(items: list[dict[str, Any]]) -> list[dict[str, str]]:
+    developments = []
+    for item in items:
+        company = _company_from_pipeline_item(item)
+        developments.append(
+            {
+                "company": company,
+                "event": _clean_sentence(item.get("what_happened") or item.get("summary") or item.get("title"), 220),
+                "source": _source_from_pipeline_item(item),
+                "date": str(item.get("published_date") or "").strip() or None,
+                "url": str(item.get("url") or item.get("source_url") or "").strip() or None,
+                "summary": _clean_sentence(item.get("summary") or item.get("what_happened") or item.get("title"), 190),
+                "why_now": _clean_sentence(item.get("why_now") or item.get("why_it_matters") or item.get("summary"), 170),
+                "market_context": _clean_sentence(
+                    item.get("market_context") or item.get("why_it_matters") or item.get("why_now") or item.get("summary"),
+                    170,
+                ),
+                "why_it_matters": _clean_sentence(
+                    item.get("why_it_matters_for_bidmatrix")
+                    or item.get("bidmatrix_angle")
+                    or item.get("why_it_matters")
+                    or item.get("summary"),
+                    170,
+                ),
+                "content_angle": _clean_sentence(
+                    item.get("content_angle")
+                    or item.get("linkedin_post_angle")
+                    or item.get("partner_or_sales_action")
+                    or item.get("concrete_action")
+                    or item.get("summary"),
+                    170,
+                ),
+                "pr_angle": _clean_sentence(item.get("pr_angle") or item.get("why_now") or item.get("summary"), 170),
+                "watch": _clean_sentence(item.get("watch_next") or item.get("concrete_action") or item.get("summary"), 150),
+            }
+        )
+    return [item for item in developments if item["event"]]
+
+
+def _company_from_pipeline_item(item: dict[str, Any]) -> str:
+    company = str(item.get("company_or_topic") or "").strip()
+    if company:
+        return _clean_sentence(company, 80).rstrip(".")
+    companies = [str(value).strip() for value in item.get("mentioned_companies", []) if str(value).strip()]
+    if companies:
+        return _clean_sentence(companies[0], 80).rstrip(".")
+    return _clean_sentence(str(item.get("title") or "Company").split(" ", 1)[0], 80).rstrip(".")
+
+
+def _source_from_pipeline_item(item: dict[str, Any]) -> str:
+    return str(item.get("source_label") or item.get("source") or item.get("source_domain") or "source").strip()
+
+
+def _topic_key(item: dict[str, Any]) -> str:
+    text = " ".join(
+        [
+            str(item.get("signal_type") or ""),
+            str(item.get("title") or ""),
+            str(item.get("summary") or ""),
+            str(item.get("why_now") or ""),
+            " ".join(str(value) for value in item.get("hot_topics", []) or []),
+        ]
+    ).lower()
+    for key, terms in (
+        ("measurement", ("measurement", "attribution", "incrementality", "skan", "mmp")),
+        ("fraud", ("fraud", "invalid traffic", "traffic quality", "brand safety")),
+        ("ctv", ("ctv", "streaming", "tv")),
+        ("ai", ("ai", "agentic", "automation", "optimization")),
+        ("programmatic", ("programmatic", "dsp", "ssp", "inventory", "marketplace")),
+        ("partnership", ("partner", "integration", "agency")),
+    ):
+        if any(term in text for term in terms):
+            return key
+    return "other"
+
+
+def _email_week_in_one_line(developments: list[dict[str, str]]) -> str:
+    companies = [item["company"] for item in developments[:3] if item.get("company")]
+    if len(companies) >= 3:
+        return f"This week's clearest moves came from {companies[0]}, {companies[1]}, and {companies[2]}."
+    if companies:
+        return f"This week's clearest moves came from {', '.join(companies)}."
+    return "This week's clearest moves show where app growth and adtech teams are putting buyer attention."
+
+
+def _unique_text(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        text = " ".join(str(value).split()).strip()
+        if not text or text.lower() in seen:
+            continue
+        seen.add(text.lower())
+        result.append(text)
+    return result
 
 
 def send_weekly_email_test(
@@ -103,6 +304,26 @@ def send_weekly_email_test(
     text_path = _manifest_preview_path(manifest_file, manifest, "text")
 
     subject = f"TEST - {manifest.get('email_subject') or 'BidMatrix Weekly Growth Brief'}"
+    skip_reason = _weekly_email_send_skip_reason(manifest)
+    if skip_reason and not dry_run:
+        return {
+            "mode": "skipped",
+            "skip_reason": skip_reason,
+            "to": os.environ.get("WEEKLY_EMAIL_TEST_TO", "").strip(),
+            "recipients": _optional_email_recipients(os.environ.get("WEEKLY_EMAIL_TEST_TO", "")),
+            "from": os.environ.get("WEEKLY_EMAIL_FROM", "").strip(),
+            "subject": subject,
+            "manifest_path": str(manifest_file),
+            "html_path": str(html_path),
+            "text_path": str(text_path),
+            "approval_required": bool(manifest.get("approval_required")),
+            "approved": bool(manifest.get("approved")),
+            "recommended_audience": manifest.get("recommended_audience"),
+            "items_count": manifest.get("items_count"),
+            "minimum_external_items": manifest.get("minimum_external_items"),
+            "external_send_ready": manifest.get("external_send_ready"),
+        }
+
     sender = _required_env("WEEKLY_EMAIL_FROM")
     recipients = _email_recipients(_required_env("WEEKLY_EMAIL_TEST_TO"))
     html_body = html_path.read_text(encoding="utf-8")
@@ -127,12 +348,34 @@ def send_weekly_email_test(
         "approval_required": bool(manifest.get("approval_required")),
         "approved": bool(manifest.get("approved")),
         "recommended_audience": manifest.get("recommended_audience"),
+        "items_count": manifest.get("items_count"),
+        "minimum_external_items": manifest.get("minimum_external_items"),
+        "external_send_ready": manifest.get("external_send_ready"),
     }
     if dry_run:
         return result
 
     response = _send_resend_email(payload)
     return {**result, "resend_response": response}
+
+
+def _weekly_email_send_skip_reason(manifest: dict[str, Any]) -> str | None:
+    items_count = _int_value(manifest.get("items_count"))
+    minimum_items = _int_value(manifest.get("minimum_external_items")) or WEEKLY_EMAIL_TARGET_ITEMS
+    if items_count is not None and items_count < minimum_items:
+        return f"insufficient_items:{items_count}_of_{minimum_items}"
+    if bool(manifest.get("limited_signal_volume")):
+        return "limited_signal_volume"
+    if manifest.get("external_send_ready") is False:
+        return "external_send_not_ready"
+    return None
+
+
+def _int_value(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def build_and_send_weekly_email_test_run(
@@ -187,7 +430,7 @@ def render_weekly_email_text(digest: dict[str, Any]) -> str:
     ]
 
     if items:
-        for index, item in enumerate(items[:5], start=1):
+        for index, item in enumerate(items[:WEEKLY_EMAIL_TARGET_ITEMS], start=1):
             lines.extend(
                 [
                     f"{index}. {_company(item)} - {_event(item)}",
@@ -209,7 +452,9 @@ def render_weekly_email_html(digest: dict[str, Any]) -> str:
     items = _top_items(digest)
     run_date = str(digest.get("run_date") or date.today().isoformat())
     theme_line = _subject_theme(subject)
-    item_blocks = "\n".join(_item_html(item, index) for index, item in enumerate(items[:5], start=1))
+    item_blocks = "\n".join(
+        _item_html(item, index) for index, item in enumerate(items[:WEEKLY_EMAIL_TARGET_ITEMS], start=1)
+    )
     if not item_blocks:
         item_blocks = (
             '<p style="margin:0; font-size:15px; line-height:1.55; color:#000000;">'
@@ -445,6 +690,12 @@ def _email_recipients(value: str) -> list[str]:
     return recipients
 
 
+def _optional_email_recipients(value: str) -> list[str]:
+    if not value.strip():
+        return []
+    return _email_recipients(value)
+
+
 def _send_resend_email(payload: dict[str, Any]) -> dict[str, Any]:
     api_key = _required_env("RESEND_API_KEY")
     body = json.dumps(payload).encode("utf-8")
@@ -470,7 +721,7 @@ def _send_resend_email(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _clean_sentence(value: str, limit: int) -> str:
-    cleaned = " ".join(value.replace("\n", " ").split()).strip(" -")
+    cleaned = " ".join(str(value or "").replace("\n", " ").split()).strip(" -")
     if not cleaned:
         return ""
     if len(cleaned) <= limit:
