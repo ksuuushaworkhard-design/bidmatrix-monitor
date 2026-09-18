@@ -12,7 +12,7 @@
     "market_watch_timeout_seconds": 12,
     "strategic_background_timeout_seconds": 10,
     "daily_total_budget_seconds": 240,
-    "max_queries_per_topic_layer": 10,
+    "max_queries_per_topic_layer": 11,
     "max_strategic_background_queries": 3,
     "max_market_watch_queries": 7,
     "max_results_per_market_watch_query": 5,

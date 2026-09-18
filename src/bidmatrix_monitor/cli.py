@@ -417,9 +417,12 @@ def _weekly_email_source_config(config, days: int):
             max_age_hours=weekly_hours,
             num_results_per_topic=max(int(getattr(search, "num_results_per_topic", 8)), 10),
             max_total_results_per_topic=max(int(getattr(search, "max_total_results_per_topic", 10)), 14),
-            max_total_results_per_layer=max(int(getattr(search, "max_total_results_per_layer", 24)), 40),
+            max_total_results_per_layer=max(int(getattr(search, "max_total_results_per_layer", 24)), 60),
             max_strategic_background_queries=max(int(getattr(search, "max_strategic_background_queries", 3)), 5),
-            daily_total_budget_seconds=max(int(getattr(search, "daily_total_budget_seconds", 240)), 300),
+            max_market_watch_queries=max(int(getattr(search, "max_market_watch_queries", 7)), 7),
+            max_results_per_market_watch_query=max(int(getattr(search, "max_results_per_market_watch_query", 5)), 7),
+            max_total_results_per_market_watch=max(int(getattr(search, "max_total_results_per_market_watch", 18)), 35),
+            daily_total_budget_seconds=max(int(getattr(search, "daily_total_budget_seconds", 240)), 420),
         )
         if is_dataclass(outputs):
             return replace(
@@ -439,11 +442,18 @@ def _weekly_email_source_config(config, days: int):
     search_values["max_age_hours"] = weekly_hours
     search_values["num_results_per_topic"] = max(int(search_values.get("num_results_per_topic", 8)), 10)
     search_values["max_total_results_per_topic"] = max(int(search_values.get("max_total_results_per_topic", 10)), 14)
-    search_values["max_total_results_per_layer"] = max(int(search_values.get("max_total_results_per_layer", 24)), 40)
+    search_values["max_total_results_per_layer"] = max(int(search_values.get("max_total_results_per_layer", 24)), 60)
     search_values["max_strategic_background_queries"] = max(
         int(search_values.get("max_strategic_background_queries", 3)), 5
     )
-    search_values["daily_total_budget_seconds"] = max(int(search_values.get("daily_total_budget_seconds", 240)), 300)
+    search_values["max_market_watch_queries"] = max(int(search_values.get("max_market_watch_queries", 7)), 7)
+    search_values["max_results_per_market_watch_query"] = max(
+        int(search_values.get("max_results_per_market_watch_query", 5)), 7
+    )
+    search_values["max_total_results_per_market_watch"] = max(
+        int(search_values.get("max_total_results_per_market_watch", 18)), 35
+    )
+    search_values["daily_total_budget_seconds"] = max(int(search_values.get("daily_total_budget_seconds", 240)), 420)
     config_values = dict(vars(config))
     config_values["search"] = SimpleNamespace(**search_values)
     if outputs is not None:

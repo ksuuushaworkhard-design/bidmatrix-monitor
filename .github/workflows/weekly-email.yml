@@ -1,4 +1,4 @@
-name: BidMatrix Weekly Email Beta
+name: BidMatrix Weekly Email
 
 on:
   pull_request:
@@ -6,8 +6,8 @@ on:
       - main
   workflow_dispatch:
   schedule:
-    # 12:00 Moscow time on Mondays.
-    - cron: '0 9 * * 1'
+    # Start at 11:47 Moscow time on Mondays to avoid GitHub's top-of-hour queue.
+    - cron: '47 8 * * 1'
 
 jobs:
   weekly-email:
@@ -33,13 +33,13 @@ jobs:
         if: ${{ github.event_name == 'pull_request' }}
         run: pytest
 
-      - name: Send weekly email beta
+      - name: Send weekly email
         if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
         env:
           EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           WEEKLY_EMAIL_FROM: ${{ secrets.WEEKLY_EMAIL_FROM }}
-          WEEKLY_EMAIL_TEST_TO: ${{ secrets.WEEKLY_EMAIL_TEST_TO }}
+          WEEKLY_EMAIL_TO: ${{ secrets.WEEKLY_EMAIL_TO || secrets.WEEKLY_EMAIL_TEST_TO }}
         run: bidmatrix-monitor --weekly-email-test-run --weekly-email-refresh-source-report
 
       - name: Upload email reports artifact
