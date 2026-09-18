@@ -164,7 +164,7 @@ def _marketing_moves_report(tmp_path: Path) -> Path:
   "signals": [
     {
       "company": "AppsFlyer",
-      "title": "Web-to-App Measurement Guide",
+      "title": "Web-to-App Measurement & ROAS Guide",
       "url": "https://www.appsflyer.com/resources/guides/web-to-app-measurement/",
       "source_domain": "appsflyer.com",
       "signal_type": "report_benchmark",
@@ -202,6 +202,7 @@ def _marketing_moves_report(tmp_path: Path) -> Path:
     {
       "company": "Adjust",
       "title": "Incrementality webinar series",
+      "url": "https://www.adjust.com/webinars/incrementality/",
       "source_domain": "adjust.com",
       "signal_type": "webinar",
       "kept": false,
@@ -210,10 +211,122 @@ def _marketing_moves_report(tmp_path: Path) -> Path:
     {
       "company": "Kayzen",
       "title": "DSP infrastructure playbook",
+      "url": "https://www.kayzen.io/playbooks/dsp-infrastructure/",
       "source_domain": "kayzen.io",
       "signal_type": "playbook",
       "kept": false,
       "what_changed": "Kayzen shared a DSP infrastructure playbook."
+    }
+  ]
+}
+""",
+        encoding="utf-8",
+    )
+    return markdown_path
+
+
+def _marketing_topic_depth_report(tmp_path: Path) -> Path:
+    markdown_path = tmp_path / "marketing-insights-radar-2026-06-11.md"
+    markdown_path.write_text(
+        "# Marketing Insights Radar — 2026-06-11\n\n## Today’s marketing pattern\nTopic-rich marketing moves.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "marketing-insights-radar-2026-06-11.json").write_text(
+        """
+{
+  "run_date": "2026-06-11",
+  "signals": [
+    {
+      "company": "AppLovin",
+      "title": "AppLovin Ads is now open to all advertisers",
+      "url": "https://www.applovin.com/blog/applovin-ads-open-to-all-advertisers/",
+      "source_domain": "applovin.com",
+      "signal_type": "product_launch",
+      "kept": true,
+      "what_changed": "AppLovin opened its self-serve advertising platform to all advertisers."
+    },
+    {
+      "company": "Sensor Tower",
+      "title": "Sensor Tower Releases State of AI 2026 Report",
+      "url": "https://sensortower.com/blog/state-of-ai-2026-report",
+      "source_domain": "sensortower.com",
+      "signal_type": "report_benchmark",
+      "kept": true,
+      "what_changed": "Sensor Tower released a State of AI 2026 report."
+    },
+    {
+      "company": "Moloco",
+      "title": "Moloco leads major investment round in mobile measurement partner AppsFlyer",
+      "url": "https://www.appsflyer.com/company/newsroom/pr/appsflyer-investment-moloco-google-meta-unity/",
+      "source_domain": "appsflyer.com",
+      "signal_type": "funding_mna",
+      "kept": true,
+      "what_changed": "Moloco appeared in an AppsFlyer-owned investment announcement."
+    },
+    {
+      "company": "AppsFlyer",
+      "title": "Axios State of AI 2026 Report",
+      "url": "https://www.axios.com/example-state-of-ai-report",
+      "source_domain": "axios.com",
+      "signal_type": "report_benchmark",
+      "kept": true,
+      "what_changed": "AppsFlyer appeared in an unrelated Axios report summary."
+    },
+    {
+      "company": "Jampp",
+      "title": "MAU Vegas: CTV as the next performance engine",
+      "url": "https://www.jampp.com/blog/mau-vegas-ctv-performance-engine",
+      "source_domain": "jampp.com",
+      "signal_type": "event_promo",
+      "kept": true,
+      "what_changed": "Jampp used MAU Vegas content to talk about CTV as a performance channel."
+    },
+    {
+      "company": "Adjust",
+      "title": "Adjust Rolls Out New Attribution Tier and AppLovin Integration",
+      "url": "https://themedialinks.com/adjust-attribution-tier-applovin-integration/",
+      "source_domain": "themedialinks.com",
+      "signal_type": "media_placement",
+      "kept": true,
+      "what_changed": "Adjust appeared in external coverage about attribution tiers and AppLovin integration."
+    },
+    {
+      "company": "Kochava",
+      "title": "Ampersand, Fandango, and Kochava Launch Closed-Loop TV Attribution for Movie Ticket Sales",
+      "url": "https://martechedge.com/news/ampersand-fandango-kochava-closed-loop-tv-attribution",
+      "source_domain": "martechedge.com",
+      "signal_type": "partnership",
+      "kept": true,
+      "what_changed": "Kochava co-announced closed-loop TV attribution with Ampersand and Fandango."
+    },
+    {
+      "company": "data.ai",
+      "title": "Sensor Tower State of AI 2026 Report",
+      "url": "https://finance.yahoo.com/technology/ai/articles/sensor-tower-state-ai-2026-103000739.html",
+      "source_domain": "finance.yahoo.com",
+      "signal_type": "report_benchmark",
+      "kept": true,
+      "what_changed": "data.ai appeared with a Sensor Tower report title."
+    },
+    {
+      "company": "ironSource",
+      "title": "Company presentation",
+      "url": "https://inderes.se/releases/company-presentation",
+      "source_domain": "inderes.se",
+      "signal_type": "media_placement",
+      "kept": true,
+      "what_changed": "ironSource had a vague external listing."
+    }
+  ],
+  "watchlist": [
+    {
+      "company": "Singular",
+      "title": "Market report mention",
+      "url": "https://www.providencejournal.com/story/example",
+      "source_domain": "providencejournal.com",
+      "signal_type": "report_benchmark",
+      "kept": false,
+      "what_changed": "Singular appeared in an unclear external source."
     }
   ]
 }
@@ -468,11 +581,11 @@ def test_marketing_insights_telegram_message_is_concise() -> None:
     )
 
     assert "<b>Marketing Insights Radar — 2026-06-11</b>" in message
-    assert "<b>Today’s useful marketing moves</b>" in message
-    assert "<b>Marketing moves to check</b>" in message
+    assert "<b>Today’s marketing takeaway</b>" in message
+    assert "<b>Moves worth checking</b>" in message
     assert "<b>Company insights</b>" not in message
     assert "1. AppsFlyer — trying to make measurement feel closer to growth decisions and budget proof." in message
-    assert "Use for BidMatrix: LinkedIn post —" in message
+    assert "BidMatrix angle:" in message
     assert "<b>Watchlist</b>" in message
     assert len(message) < 1800
 
@@ -483,26 +596,27 @@ def test_marketing_insights_telegram_uses_concrete_marketing_moves_from_json(tmp
         date(2026, 6, 11),
     )
 
-    assert "<b>Marketing moves to check</b>" in message
-    assert "AppsFlyer — published Web-to-App Measurement Guide." in message
-    assert "DoubleVerify — published CTV Fraud Research Report." in message
-    assert "Source: appsflyer.com — Web-to-App Measurement Guide" in message
-    assert "Source: doubleverify.com — CTV Fraud Research Report" in message
+    assert "<b>Moves worth checking</b>" in message
+    assert "<b>AppsFlyer</b> — published web-to-app measurement content to make full-funnel performance proof more visible." in message
+    assert "<b>DoubleVerify</b> — published fraud or inventory-quality research to turn risk data into a sales argument." in message
+    assert 'Source: <a href="https://www.appsflyer.com/resources/guides/web-to-app-measurement/">appsflyer.com — Web-to-App Measurement &amp; ROAS Guide</a>' in message
+    assert 'Source: <a href="https://doubleverify.com/reports/ctv-fraud-research/">doubleverify.com — CTV Fraud Research Report</a>' in message
     assert "Mintegral" not in message
     assert "positioning around AI-led campaign operations" not in message
 
 
-def test_marketing_insights_telegram_use_lines_are_practical(tmp_path) -> None:
+def test_marketing_insights_telegram_uses_strategic_bidmatrix_angles(tmp_path) -> None:
     message = delivery._marketing_insights_telegram_message_from_report(
         _marketing_moves_report(tmp_path),
         date(2026, 6, 11),
     )
-    use_lines = [line for line in message.splitlines() if line.startswith("Use for BidMatrix:")]
+    angle_lines = [line for line in message.splitlines() if line.startswith("BidMatrix angle:")]
 
-    assert use_lines
-    assert any("LinkedIn post" in line for line in use_lines)
-    assert any("Sales deck note" in line or "Website message" in line for line in use_lines)
-    assert max(use_lines.count(line) for line in set(use_lines)) <= 2
+    assert angle_lines
+    assert any("Messaging steal" in line for line in angle_lines)
+    assert any("Proof asset" in line for line in angle_lines)
+    assert "Ideas for BidMatrix" not in message
+    assert "make a LinkedIn post" not in message
 
 
 def test_marketing_insights_telegram_watchlist_avoids_placeholder_copy(tmp_path) -> None:
@@ -517,8 +631,97 @@ def test_marketing_insights_telegram_watchlist_avoids_placeholder_copy(tmp_path)
     assert "more report" not in message
     assert "more article" not in message
     assert "more podcast" not in message
-    assert "Adjust — monitor adjust.com for new webinars or measurement resources." in message
-    assert "Kayzen — monitor kayzen.io for new playbooks or DSP infrastructure content." in message
+    assert 'Adjust — monitor <a href="https://www.adjust.com/webinars/incrementality/">adjust.com — Incrementality webinar series</a> for new webinars or measurement resources.' in message
+    assert 'Kayzen — monitor <a href="https://www.kayzen.io/playbooks/dsp-infrastructure/">kayzen.io — DSP infrastructure playbook</a> for new playbooks or DSP infrastructure content.' in message
+
+
+def test_marketing_insights_telegram_interprets_topic_depth_from_titles(tmp_path) -> None:
+    message = delivery._marketing_insights_telegram_message_from_report(
+        _marketing_topic_depth_report(tmp_path),
+        date(2026, 6, 11),
+    )
+
+    assert "<b>AppLovin</b> — opened its self-serve ad platform to all advertisers and used access as a market-expansion story." in message
+    assert "<b>Sensor Tower</b> — released a State of AI report to own the AI market-data narrative." in message
+    assert "<b>Jampp</b> — used CTV content to frame connected TV as the next performance channel." in message
+    assert "<b>Adjust</b> — appeared in external coverage about attribution tiers and AppLovin integration." in message
+    assert "Moloco" not in message
+    assert "Axios State of AI" not in message
+    assert "ironSource" not in message
+    assert "data.ai" not in message
+    assert "used partner content with" not in message
+    assert "turned a product or positioning update into a marketing asset" not in message
+    assert "published AppLovin" not in message
+    assert "promoted an event with a clear growth-market message" not in message
+
+
+def test_marketing_insights_telegram_does_not_render_old_labels(tmp_path) -> None:
+    message = delivery._marketing_insights_telegram_message_from_report(
+        _marketing_topic_depth_report(tmp_path),
+        date(2026, 6, 11),
+    )
+
+    assert "<b>Today’s marketing takeaway</b>" in message
+    assert "<b>Moves worth checking</b>" in message
+    assert "Hidden play:" in message
+    assert "BidMatrix angle:" in message
+    assert "<b>Strategic angles for BidMatrix</b>" in message
+    assert "Today’s useful marketing moves" not in message
+    assert "Marketing moves to check" not in message
+    assert "Why it matters:" not in message
+    assert "Use for BidMatrix:" not in message
+
+
+def test_marketing_insights_telegram_hidden_play_and_angle_reference_extracted_topics(tmp_path) -> None:
+    message = delivery._marketing_insights_telegram_message_from_report(
+        _marketing_topic_depth_report(tmp_path),
+        date(2026, 6, 11),
+    )
+
+    assert "Hidden play: They are trying to make access feel like momentum and inevitability." in message
+    assert "Hidden play: They are making their data feel like market infrastructure, not just a one-off report." in message
+    assert "Hidden play: They are moving CTV away from brand awareness and into performance budget conversations." in message
+    assert "Hidden play: They are using third-party distribution to make their claims feel less self-promotional." in message
+    assert "BidMatrix angle: Counter-narrative — open access is not quality growth" in message
+    assert "BidMatrix angle: Proof asset — create a recurring UA Quality Evidence File" in message
+    assert "BidMatrix angle: Category gap — own a quality-first CTV angle" in message
+    assert "BidMatrix angle: Distribution clue — build a shortlist of proof-led media formats" in message
+
+
+def test_marketing_insights_telegram_includes_strategic_angles_section(tmp_path) -> None:
+    message = delivery._marketing_insights_telegram_message_from_report(
+        _marketing_topic_depth_report(tmp_path),
+        date(2026, 6, 11),
+    )
+
+    assert "<b>Strategic angles for BidMatrix</b>" in message
+    assert "Counter-narrative: open access is not quality growth." in message
+    assert "Proof asset: package small recurring quality signals" in message
+    assert "Category gap: define CTV performance around quality leakage" in message
+    assert "Distribution clue: prioritize proof-led media/source formats" in message
+
+
+def test_marketing_insights_partner_integration_maps_to_partner_wedge() -> None:
+    signal = {
+        "company": "Kochava",
+        "title": "Ampersand, Fandango, and Kochava Launch Closed-Loop TV Attribution for Movie Ticket Sales",
+        "source_domain": "martechedge.com",
+        "signal_type": "partnership",
+        "kept": True,
+        "what_changed": "Kochava co-announced closed-loop TV attribution with Ampersand and Fandango.",
+    }
+
+    assert "borrowing partner credibility" in delivery._marketing_move_hidden_play(signal)
+    assert "Partner wedge" in delivery._marketing_move_bidmatrix_angle(signal)
+
+
+def test_marketing_insights_telegram_watchlist_uses_links_for_sources(tmp_path) -> None:
+    message = delivery._marketing_insights_telegram_message_from_report(
+        _marketing_topic_depth_report(tmp_path),
+        date(2026, 6, 11),
+    )
+
+    assert '<a href="https://www.providencejournal.com/story/example">providencejournal.com — Market report mention</a>' in message
 
 
 def test_cli_daily_logs_delivery_failure_cleanly(monkeypatch, tmp_path, capsys) -> None:
