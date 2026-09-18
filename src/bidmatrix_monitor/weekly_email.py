@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
+from functools import lru_cache
 import html
 import json
 import os
@@ -20,6 +21,17 @@ class WeeklyEmailError(RuntimeError):
 
 
 WEEKLY_EMAIL_TARGET_ITEMS = 5
+WEEKLY_EMAIL_MINIMUM_EXTERNAL_ITEMS = 3
+WEEKLY_EMAIL_LAUNCH_DATE = date(2026, 9, 21)
+WEEKLY_EMAIL_LAUNCH_INTRO = (
+    "Hi everyone! 👋 Ksenia here, Marketing Manager at BidMatrix.\n\n"
+    "Thanks to vibe coding, we no longer need to browse dozens of industry publications or scroll through "
+    "LinkedIn to stay up to date. I’ve automated the process of finding and selecting important news, so every "
+    "week we can receive a short digest with the developments that are genuinely worth knowing about. 📰\n\n"
+    "From now on, this industry news digest will arrive automatically every Monday. It will help us spot market "
+    "changes earlier, follow competitors, and keep emerging trends in mind as we plan and improve our work. 🚀\n\n"
+    "I’d love to hear your feedback and suggestions. Let’s make this digest as useful as possible for the whole team. 💡"
+)
 
 
 def build_weekly_email_preview(
@@ -36,7 +48,12 @@ def build_weekly_email_preview(
     digest_source_dir = Path(source_report_dir) if source_report_dir else output_dir
     digest = build_weekly_digest(digest_source_dir, days)
     digest = _prefer_pipeline_selected_digest_items(digest, digest_source_dir, days, output_date)
-    digest = {**digest, "run_date": output_date.isoformat(), "email_subject": weekly_email_subject(digest)}
+    digest = {
+        **digest,
+        "run_date": output_date.isoformat(),
+        "email_subject": weekly_email_subject(digest),
+        "include_launch_intro": output_date == WEEKLY_EMAIL_LAUNCH_DATE,
+    }
 
     stem = f"weekly-email-preview-{output_date.isoformat()}"
     html_path = output_dir / f"{stem}.html"
@@ -60,16 +77,16 @@ def build_weekly_email_manifest(
 ) -> dict[str, Any]:
     items = _top_items(digest)
     items_count = len(items)
-    minimum_external_items = WEEKLY_EMAIL_TARGET_ITEMS
+    minimum_external_items = WEEKLY_EMAIL_MINIMUM_EXTERNAL_ITEMS
     external_send_ready = items_count >= minimum_external_items and not bool(digest.get("limited_signal_volume"))
     return {
-        "status": "needs_review",
-        "approval_required": True,
-        "approved": False,
+        "status": "ready_to_send",
+        "approval_required": False,
+        "approved": True,
         "approved_by": None,
         "approved_at": None,
         "external_send_ready": external_send_ready,
-        "recommended_audience": "internal_test",
+        "recommended_audience": "internal_team",
         "run_date": str(digest.get("run_date") or output_date.isoformat()),
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "preview_files": {
@@ -102,10 +119,30 @@ def _prefer_pipeline_selected_digest_items(
     if not pipeline_items:
         return digest
 
+    source_item_count = len(pipeline_items)
+    pipeline_items = _priority_pipeline_company_items(pipeline_items)
     pipeline_items = _distinct_pipeline_company_items(pipeline_items)
     developments = _email_developments_from_pipeline_items(pipeline_items[:WEEKLY_EMAIL_TARGET_ITEMS])
     if not developments:
-        return digest
+        diagnostics = dict(digest.get("diagnostics") or {})
+        diagnostics.update(
+            {
+                "weekly_email_selection_source": "pipeline_selected_items",
+                "weekly_email_selected_items_count": 0,
+                "weekly_email_unrecognized_company_items_skipped": source_item_count,
+                "weekly_email_target_items": WEEKLY_EMAIL_TARGET_ITEMS,
+                "weekly_email_minimum_external_items": WEEKLY_EMAIL_MINIMUM_EXTERNAL_ITEMS,
+            }
+        )
+        return {
+            **digest,
+            "item_count": 0,
+            "limited_signal_volume": True,
+            "week_in_one_line": "No strong developments from priority companies passed the weekly quality gate.",
+            "what_actually_happened": [],
+            "why_it_matters_for_bidmatrix": [],
+            "diagnostics": diagnostics,
+        }
 
     diagnostics = dict(digest.get("diagnostics") or {})
     diagnostics.update(
@@ -113,13 +150,15 @@ def _prefer_pipeline_selected_digest_items(
             "weekly_email_selection_source": "pipeline_selected_items",
             "weekly_email_selected_items_count": len(developments),
             "weekly_email_base_weekly_items_count": len(_top_items(digest)),
+            "weekly_email_unrecognized_company_items_skipped": source_item_count - len(pipeline_items),
             "weekly_email_target_items": WEEKLY_EMAIL_TARGET_ITEMS,
+            "weekly_email_minimum_external_items": WEEKLY_EMAIL_MINIMUM_EXTERNAL_ITEMS,
         }
     )
     return {
         **digest,
         "item_count": len(developments),
-        "limited_signal_volume": len(developments) < WEEKLY_EMAIL_TARGET_ITEMS,
+        "limited_signal_volume": len(developments) < WEEKLY_EMAIL_MINIMUM_EXTERNAL_ITEMS,
         "week_in_one_line": _email_week_in_one_line(developments),
         "what_actually_happened": developments,
         "why_it_matters_for_bidmatrix": _unique_text(
@@ -205,6 +244,35 @@ def _distinct_pipeline_company_items(items: list[dict[str, Any]]) -> list[dict[s
     return selected
 
 
+def _priority_pipeline_company_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    priority_keys = _weekly_email_priority_company_keys()
+    return [item for item in items if _matches_priority_company(_company_from_pipeline_item(item), priority_keys)]
+
+
+@lru_cache(maxsize=1)
+def _weekly_email_priority_company_keys() -> frozenset[str]:
+    config_dir = Path(__file__).resolve().parents[2] / "config"
+    names: list[str] = []
+    competitors = json.loads((config_dir / "tracked_competitors.json").read_text(encoding="utf-8"))
+    companies = json.loads((config_dir / "tracked_companies.json").read_text(encoding="utf-8"))
+    names.extend(str(value) for value in competitors)
+    names.extend(str(value) for value in companies.get("partners", []))
+    names.extend(str(value) for value in companies.get("watchlist", []))
+    return frozenset(_company_dedupe_key(name) for name in names if _company_dedupe_key(name))
+
+
+def _matches_priority_company(company: str, priority_keys: frozenset[str]) -> bool:
+    company_key = _company_dedupe_key(company)
+    if not company_key:
+        return False
+    return any(
+        company_key == known
+        or known.startswith(f"{company_key} ")
+        or company_key.startswith(f"{known} ")
+        for known in priority_keys
+    )
+
+
 def _email_developments_from_pipeline_items(items: list[dict[str, Any]]) -> list[dict[str, str]]:
     developments = []
     for item in items:
@@ -272,6 +340,13 @@ def _looks_like_topic_subject(value: str) -> bool:
         "fraud",
         "privacy",
         "programmatic",
+        "ad tech",
+        "adtech",
+        "antitrust",
+        "remedies",
+        "guarantees",
+        "integration",
+        "expansion",
     )
     return any(term in text for term in topic_terms)
 
@@ -339,14 +414,15 @@ def send_weekly_email_test(
     html_path = _manifest_preview_path(manifest_file, manifest, "html")
     text_path = _manifest_preview_path(manifest_file, manifest, "text")
 
-    subject = f"TEST - {manifest.get('email_subject') or 'BidMatrix Weekly Growth Brief'}"
+    subject = str(manifest.get("email_subject") or "BidMatrix Weekly Growth Brief")
+    recipient_value = _weekly_email_recipient_value()
     skip_reason = _weekly_email_send_skip_reason(manifest)
     if skip_reason and not dry_run:
         return {
             "mode": "skipped",
             "skip_reason": skip_reason,
-            "to": os.environ.get("WEEKLY_EMAIL_TEST_TO", "").strip(),
-            "recipients": _optional_email_recipients(os.environ.get("WEEKLY_EMAIL_TEST_TO", "")),
+            "to": recipient_value,
+            "recipients": _optional_email_recipients(recipient_value),
             "from": os.environ.get("WEEKLY_EMAIL_FROM", "").strip(),
             "subject": subject,
             "manifest_path": str(manifest_file),
@@ -361,13 +437,14 @@ def send_weekly_email_test(
         }
 
     sender = _required_env("WEEKLY_EMAIL_FROM")
-    recipients = _email_recipients(_required_env("WEEKLY_EMAIL_TEST_TO"))
+    recipients = _email_recipients(_required_weekly_email_recipients())
     html_body = html_path.read_text(encoding="utf-8")
     text_body = text_path.read_text(encoding="utf-8")
 
     payload = {
         "from": sender,
-        "to": recipients,
+        "to": [sender],
+        "bcc": recipients,
         "subject": subject,
         "html": html_body,
         "text": text_body,
@@ -456,6 +533,10 @@ def render_weekly_email_text(digest: dict[str, Any]) -> str:
         "",
         f"BidMatrix Weekly Growth Brief - {run_date}",
         "",
+    ]
+    if digest.get("include_launch_intro"):
+        lines.extend([WEEKLY_EMAIL_LAUNCH_INTRO, "", "---", ""])
+    lines.extend([
         "This week's market story:",
         _takeaway(digest),
         "",
@@ -463,7 +544,7 @@ def render_weekly_email_text(digest: dict[str, Any]) -> str:
         _why_it_matters(digest),
         "",
         "Moves worth reading:",
-    ]
+    ])
 
     if items:
         for index, item in enumerate(items[:WEEKLY_EMAIL_TARGET_ITEMS], start=1):
@@ -479,7 +560,7 @@ def render_weekly_email_text(digest: dict[str, Any]) -> str:
     else:
         lines.extend(["No weekly moves were ready for this email preview.", ""])
 
-    lines.extend(["Internal beta preview. Reply with feedback before this becomes the external weekly email."])
+    lines.extend(["Prepared for the BidMatrix team. Reply to Ksusha with feedback or useful sources to add."])
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -496,6 +577,7 @@ def render_weekly_email_html(digest: dict[str, Any]) -> str:
             '<p style="margin:0; font-size:15px; line-height:1.55; color:#000000;">'
             "No weekly moves were ready for this email preview.</p>"
         )
+    launch_intro = _launch_intro_html() if digest.get("include_launch_intro") else ""
     return f"""<!doctype html>
 <html>
   <head>
@@ -521,6 +603,7 @@ def render_weekly_email_html(digest: dict[str, Any]) -> str:
             </tr>
             <tr>
               <td style="padding:24px 32px 8px;">
+                {launch_intro}
                 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#ffffff; border:1px solid #D9D9D9; border-left:4px solid #09CAB6; border-radius:10px;">
                   <tr>
                     <td style="padding:18px 20px;">
@@ -541,7 +624,7 @@ def render_weekly_email_html(digest: dict[str, Any]) -> str:
             </tr>
             <tr>
               <td style="padding:8px 32px 30px;">
-                <p style="font-size:13px; line-height:1.5; color:#000000; margin:18px 0 0;">Internal beta preview. Reply with feedback before this becomes an external weekly email.</p>
+                <p style="font-size:13px; line-height:1.5; color:#000000; margin:18px 0 0;">Prepared for the BidMatrix team. Reply to Ksusha with feedback or useful sources to add.</p>
               </td>
             </tr>
           </table>
@@ -604,6 +687,21 @@ def _logo_html() -> str:
     return (
         '<p style="margin:0; color:#09CAB6; font-family:Oswald, Oswaldo, Arial, Helvetica, sans-serif; '
         'font-size:24px; line-height:1; font-weight:400;">BidMatrix</p>'
+    )
+
+
+def _launch_intro_html() -> str:
+    paragraphs = "".join(
+        '<p style="margin:{}; font-size:15px; line-height:1.55; color:#000000;">{}</p>'.format(
+            "0" if index == 0 else "12px 0 0",
+            html.escape(paragraph),
+        )
+        for index, paragraph in enumerate(WEEKLY_EMAIL_LAUNCH_INTRO.split("\n\n"))
+    )
+    return (
+        '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" '
+        'style="margin:0 0 20px; background:#ffffff; border:1px solid #D9D9D9; border-radius:10px;">'
+        f'<tr><td style="padding:18px 20px;">{paragraphs}</td></tr></table>'
     )
 
 
@@ -736,13 +834,24 @@ def _required_env(key: str) -> str:
     return value
 
 
+def _weekly_email_recipient_value() -> str:
+    return os.environ.get("WEEKLY_EMAIL_TO", "").strip() or os.environ.get("WEEKLY_EMAIL_TEST_TO", "").strip()
+
+
+def _required_weekly_email_recipients() -> str:
+    value = _weekly_email_recipient_value()
+    if not value:
+        raise WeeklyEmailError("Missing required environment variable: WEEKLY_EMAIL_TO")
+    return value
+
+
 def _email_recipients(value: str) -> list[str]:
     recipients = [part.strip() for part in value.replace(";", ",").split(",") if part.strip()]
     if not recipients:
-        raise WeeklyEmailError("WEEKLY_EMAIL_TEST_TO must include at least one recipient.")
+        raise WeeklyEmailError("WEEKLY_EMAIL_TO must include at least one recipient.")
     invalid = [recipient for recipient in recipients if "@" not in recipient or recipient.startswith("@")]
     if invalid:
-        raise WeeklyEmailError(f"WEEKLY_EMAIL_TEST_TO contains invalid recipient(s): {', '.join(invalid)}")
+        raise WeeklyEmailError(f"WEEKLY_EMAIL_TO contains invalid recipient(s): {', '.join(invalid)}")
     return recipients
 
 
