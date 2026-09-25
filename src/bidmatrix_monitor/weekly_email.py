@@ -9,6 +9,7 @@ import re
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 from dotenv import load_dotenv
@@ -120,9 +121,10 @@ def _prefer_pipeline_selected_digest_items(
         return digest
 
     source_item_count = len(pipeline_items)
-    pipeline_items = _priority_pipeline_company_items(pipeline_items)
-    pipeline_items = _distinct_pipeline_company_items(pipeline_items)
-    developments = _email_developments_from_pipeline_items(pipeline_items[:WEEKLY_EMAIL_TARGET_ITEMS])
+    priority_items = _distinct_pipeline_company_items(_priority_pipeline_company_items(pipeline_items))
+    fallback_items = _quality_fallback_pipeline_items(pipeline_items, priority_items)
+    selected_items = _distinct_pipeline_company_items(priority_items + fallback_items)[:WEEKLY_EMAIL_TARGET_ITEMS]
+    developments = _email_developments_from_pipeline_items(selected_items)
     if not developments:
         diagnostics = dict(digest.get("diagnostics") or {})
         diagnostics.update(
@@ -150,7 +152,9 @@ def _prefer_pipeline_selected_digest_items(
             "weekly_email_selection_source": "pipeline_selected_items",
             "weekly_email_selected_items_count": len(developments),
             "weekly_email_base_weekly_items_count": len(_top_items(digest)),
-            "weekly_email_unrecognized_company_items_skipped": source_item_count - len(pipeline_items),
+            "weekly_email_priority_items_count": len(priority_items),
+            "weekly_email_fallback_items_count": len(selected_items) - len(priority_items),
+            "weekly_email_unrecognized_company_items_skipped": source_item_count - len(selected_items),
             "weekly_email_target_items": WEEKLY_EMAIL_TARGET_ITEMS,
             "weekly_email_minimum_external_items": WEEKLY_EMAIL_MINIMUM_EXTERNAL_ITEMS,
         }
@@ -247,6 +251,52 @@ def _distinct_pipeline_company_items(items: list[dict[str, Any]]) -> list[dict[s
 def _priority_pipeline_company_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     priority_keys = _weekly_email_priority_company_keys()
     return [item for item in items if _matches_priority_company(_company_from_pipeline_item(item), priority_keys)]
+
+
+def _quality_fallback_pipeline_items(
+    items: list[dict[str, Any]],
+    priority_items: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    fallback_needed = max(0, WEEKLY_EMAIL_MINIMUM_EXTERNAL_ITEMS - len(priority_items))
+    if fallback_needed == 0:
+        return []
+    priority_keys = {_company_dedupe_key(_company_from_pipeline_item(item)) for item in priority_items}
+    fallback: list[dict[str, Any]] = []
+    for item in items:
+        company_key = _company_dedupe_key(_company_from_pipeline_item(item))
+        if not company_key or company_key in priority_keys:
+            continue
+        if not _is_quality_fallback_item(item):
+            continue
+        fallback.append(item)
+        priority_keys.add(company_key)
+        if len(fallback) >= fallback_needed:
+            break
+    return fallback
+
+
+def _is_quality_fallback_item(item: dict[str, Any]) -> bool:
+    page_type = str(item.get("page_type") or "").strip().lower()
+    if page_type not in {"news_article", "press_release", "report_page", "thought_leadership"}:
+        return False
+    source_type = str(item.get("source_type") or "").strip().lower()
+    if source_type not in {"industry_media", "official_company"}:
+        return False
+    if (_int_value(item.get("score")) or 0) < 8:
+        return False
+    url = str(item.get("url") or item.get("source_url") or "").strip()
+    domain = urlparse(url).netloc.lower().removeprefix("www.")
+    if not domain or domain.startswith("status.") or domain not in _weekly_email_high_signal_domains():
+        return False
+    description = str(item.get("what_happened") or item.get("summary") or "").strip()
+    return len(description) >= 60
+
+
+@lru_cache(maxsize=1)
+def _weekly_email_high_signal_domains() -> frozenset[str]:
+    config_path = Path(__file__).resolve().parents[2] / "config" / "priority_sources.json"
+    data = json.loads(config_path.read_text(encoding="utf-8"))
+    return frozenset(str(value).strip().lower() for value in data.get("high_signal_domains", []) if str(value).strip())
 
 
 @lru_cache(maxsize=1)

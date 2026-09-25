@@ -646,6 +646,87 @@ def test_weekly_email_main_items_keep_priority_companies_and_skip_unknown_compan
     assert [item["company_or_topic"] for item in selected] == ["Google", "Magnite", "TripleLift"]
 
 
+def test_weekly_email_fills_priority_shortfall_with_strong_industry_news(monkeypatch, tmp_path: Path) -> None:
+    selected_items = [
+        {
+            "company_or_topic": "Index Exchange",
+            "title": "Index Exchange adds independent brand lift measurement",
+            "what_happened": "Index Exchange partnered with On Device to add independent brand lift measurement to its marketplaces.",
+            "url": "https://www.exchangewire.com/index-exchange-brand-lift",
+            "source_label": "exchangewire.com (high-signal)",
+            "page_type": "news_article",
+            "source_type": "industry_media",
+            "score": 10,
+        },
+        {
+            "company_or_topic": "Smadex",
+            "title": "Smadex expands performance CTV",
+            "what_happened": "Smadex refreshed its positioning as performance CTV became a measurable growth channel for app marketers.",
+            "url": "https://www.pocketgamer.biz/smadex-performance-ctv",
+            "source_label": "pocketgamer.biz (high-signal)",
+            "page_type": "news_article",
+            "source_type": "industry_media",
+            "score": 9,
+        },
+        {
+            "company_or_topic": "DAIVID",
+            "title": "DAIVID connects creative quality to media optimization",
+            "what_happened": "DAIVID launched an AI creative audit that connects attention and emotion signals to campaign outcomes and budget decisions.",
+            "url": "https://www.exchangewire.com/daivid-creative-audit",
+            "source_label": "exchangewire.com (high-signal)",
+            "page_type": "news_article",
+            "source_type": "industry_media",
+            "score": 10,
+        },
+    ]
+    report_path = tmp_path / "bidmatrix-monitor-2026-09-21-curated.json"
+    report_path.write_text(json.dumps({"daily_digest_items": selected_items}), encoding="utf-8")
+
+    result = weekly_email._prefer_pipeline_selected_digest_items(
+        _digest(), tmp_path, 7, date(2026, 9, 21)
+    )
+
+    assert [item["company"] for item in result["what_actually_happened"]] == [
+        "Index Exchange",
+        "Smadex",
+        "DAIVID",
+    ]
+    assert result["limited_signal_volume"] is False
+    assert result["diagnostics"]["weekly_email_priority_items_count"] == 2
+    assert result["diagnostics"]["weekly_email_fallback_items_count"] == 1
+
+
+def test_weekly_email_fallback_rejects_status_event_and_weak_pages() -> None:
+    items = [
+        {
+            "company_or_topic": "AppsFlyer",
+            "what_happened": "AppsFlyer reported that its attribution and reporting systems were operating normally across all regions.",
+            "url": "https://status.appsflyer.com/",
+            "page_type": "news_article",
+            "source_type": "official_company",
+            "score": 10,
+        },
+        {
+            "company_or_topic": "Industry Event",
+            "what_happened": "An industry conference published its registration page and agenda for a future marketing event.",
+            "url": "https://www.businessofapps.com/event/nyc/register/",
+            "page_type": "conference_announcement",
+            "source_type": "conference_site",
+            "score": 9,
+        },
+        {
+            "company_or_topic": "Unknown Vendor",
+            "what_happened": "An unknown vendor published a vague update without a concrete product, partnership, report, or market move.",
+            "url": "https://example.com/update",
+            "page_type": "unknown",
+            "source_type": "unknown",
+            "score": 10,
+        },
+    ]
+
+    assert weekly_email._quality_fallback_pipeline_items(items, []) == []
+
+
 def test_weekly_email_preview_cli_does_not_deliver(monkeypatch, tmp_path: Path, capsys) -> None:
     html_path = tmp_path / "weekly-email-preview-2026-08-14.html"
     text_path = tmp_path / "weekly-email-preview-2026-08-14.txt"
