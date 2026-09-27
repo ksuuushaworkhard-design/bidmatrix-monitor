@@ -429,7 +429,7 @@ def test_weekly_email_preview_uses_distinct_companies_for_main_items(monkeypatch
     assert digest["diagnostics"]["weekly_email_selected_items_count"] == 5
 
 
-def test_weekly_email_preview_uses_telegram_pipeline_items_not_background_fillers(
+def test_weekly_email_preview_keeps_ready_telegram_weekly_digest(
     monkeypatch, tmp_path: Path
 ) -> None:
     source_dir = tmp_path / "source-reports"
@@ -490,13 +490,13 @@ def test_weekly_email_preview_uses_telegram_pipeline_items_not_background_filler
         lambda report_dir, days: {
             **_digest(),
             "what_actually_happened": [
-                {"company": "Legacy One", "event": "legacy item", "source": "legacy.com"},
-                {"company": "Legacy Two", "event": "legacy item", "source": "legacy.com"},
-                {"company": "Legacy Three", "event": "legacy item", "source": "legacy.com"},
-                {"company": "Legacy Four", "event": "legacy item", "source": "legacy.com"},
-                {"company": "Legacy Five", "event": "legacy item", "source": "legacy.com"},
+                {"company": "Lifesight", "event": "open-sourced its Horizon forecasting engine.", "source": "adexchanger.com"},
+                {"company": "Unity", "event": "released day-one support for Meta VR Glasses.", "source": "unity.com"},
+                {"company": "AppsFlyer and Branch", "event": "expanded attribution for AI platforms.", "source": "pocketgamer.biz"},
+                {"company": "Google", "event": "added agentic AI capabilities to Meridian.", "source": "marketingdive.com"},
             ],
             "limited_signal_volume": False,
+            "diagnostics": {"weekly_selected_items_count": 4},
         },
     )
 
@@ -510,14 +510,17 @@ def test_weekly_email_preview_uses_telegram_pipeline_items_not_background_filler
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     text = text_path.read_text(encoding="utf-8")
 
-    assert manifest["items_count"] == 2
-    assert manifest["external_send_ready"] is False
-    assert manifest["limited_signal_volume"] is True
-    assert digest["diagnostics"]["weekly_email_selection_source"] == "pipeline_selected_items"
-    assert "Adjust" in text
-    assert "Innovid" in text
+    assert manifest["items_count"] == 4
+    assert manifest["external_send_ready"] is True
+    assert manifest["limited_signal_volume"] is False
+    assert digest["diagnostics"]["weekly_email_selection_source"] == "weekly_digest"
+    assert "Lifesight" in text
+    assert "Unity" in text
+    assert "AppsFlyer and Branch" in text
+    assert "Google" in text
     assert "Old Context" not in text
-    assert "Legacy One" not in text
+    assert "Adjust" not in text
+    assert "Innovid" not in text
 
 
 def test_weekly_email_manifest_counts_distinct_companies_only(monkeypatch, tmp_path: Path) -> None:
