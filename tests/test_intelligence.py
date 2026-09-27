@@ -665,12 +665,12 @@ def test_weekly_digest_uses_14d_fallback_when_7d_is_thin(tmp_path) -> None:
     report = build_report(items, config)
     write_report(report, tmp_path)
     digest = build_weekly_digest(tmp_path, days=7)
-    assert digest["diagnostics"]["weekly_fallback_level_used"] in {"weekly_7d", "weekly_14d"}
-    assert digest["diagnostics"]["weekly_recent_14d_count"] >= 1
-    assert len(digest["what_actually_happened"]) >= 2
+    assert digest["diagnostics"]["weekly_fallback_level_used"] == "weekly_7d"
+    assert digest["diagnostics"]["weekly_recent_14d_count"] == 0
+    assert [item["company"] for item in digest["what_actually_happened"]] == ["AppsFlyer"]
 
 
-def test_weekly_digest_uses_30d_fallback_when_14d_is_thin(tmp_path) -> None:
+def test_weekly_digest_does_not_use_30d_fallback_when_week_is_thin(tmp_path) -> None:
     config = MonitorConfig(
         brand_name="BidMatrix",
         brand_description="Adtech",
@@ -708,9 +708,9 @@ def test_weekly_digest_uses_30d_fallback_when_14d_is_thin(tmp_path) -> None:
     report = build_report(items, config)
     write_report(report, tmp_path)
     digest = build_weekly_digest(tmp_path, days=7)
-    assert digest["diagnostics"]["weekly_recent_30d_count"] >= 1
-    assert digest["diagnostics"]["weekly_fallback_level_used"] == "weekly_30d"
-    assert len(digest["what_actually_happened"]) >= 1
+    assert digest["diagnostics"]["weekly_recent_30d_count"] == 0
+    assert digest["diagnostics"]["weekly_fallback_level_used"] == "weekly_empty"
+    assert digest["what_actually_happened"] == []
 
 
 

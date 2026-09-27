@@ -1126,10 +1126,10 @@ def test_weekly_email_test_run_can_refresh_source_report_without_delivery(
 
     output = capsys.readouterr().out
     assert calls == ["print_collection_summary", "email_test_run"]
-    assert seen["max_age_hours"] == 336
+    assert seen["max_age_hours"] == 168
     assert fake_config.search.max_age_hours == 24
     assert "WEEKLY_EMAIL_SOURCE_REFRESH_STARTED" in output
-    assert "lookback_hours=336" in output
+    assert "lookback_hours=168" in output
     assert "WEEKLY_EMAIL_SOURCE_REFRESH_WRITTEN" in output
     assert "WEEKLY_EMAIL_TEST_RUN_FINISHED mode=dry_run" in output
 
@@ -1152,7 +1152,7 @@ def test_weekly_email_source_config_uses_wider_search_without_mutating_daily_con
 
     weekly_config = cli_module._weekly_email_source_config(config, days=7)
 
-    assert weekly_config.search.max_age_hours == 336
+    assert weekly_config.search.max_age_hours == 168
     assert weekly_config.search.num_results_per_topic == 10
     assert weekly_config.search.max_total_results_per_topic == 14
     assert weekly_config.search.max_total_results_per_layer == 60
