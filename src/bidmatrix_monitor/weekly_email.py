@@ -48,7 +48,12 @@ def build_weekly_email_preview(
 
     digest_source_dir = Path(source_report_dir) if source_report_dir else output_dir
     digest = build_weekly_digest(digest_source_dir, days)
-    digest = _prefer_pipeline_selected_digest_items(digest, digest_source_dir, days, output_date)
+    if len(_top_items(digest)) < WEEKLY_EMAIL_MINIMUM_EXTERNAL_ITEMS:
+        digest = _prefer_pipeline_selected_digest_items(digest, digest_source_dir, days, output_date)
+    else:
+        diagnostics = dict(digest.get("diagnostics") or {})
+        diagnostics["weekly_email_selection_source"] = "weekly_digest"
+        digest = {**digest, "diagnostics": diagnostics}
     digest = {
         **digest,
         "run_date": output_date.isoformat(),
