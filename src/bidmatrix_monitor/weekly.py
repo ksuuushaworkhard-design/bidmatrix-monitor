@@ -241,11 +241,9 @@ def _select_weekly_items(items: list[dict[str, Any]], run_date: date) -> tuple[l
         reverse=True,
     )
 
-    for allowed in ({"fresh_7d"}, {"recent_14d"}, {"recent_30d"}):
-        add_candidates(ranked, allowed=allowed, unique_bucket=True)
+    add_candidates(ranked, allowed={"fresh_7d"}, unique_bucket=True)
     if len(selected) < 3:
-        for allowed in ({"fresh_7d"}, {"recent_14d"}, {"recent_30d"}):
-            add_candidates(ranked, allowed=allowed, unique_bucket=False)
+        add_candidates(ranked, allowed={"fresh_7d"}, unique_bucket=False)
 
     confidence_relaxation_used = False
     if not selected:
@@ -260,10 +258,6 @@ def _select_weekly_items(items: list[dict[str, Any]], run_date: date) -> tuple[l
 
     if fresh_7d_count:
         fallback_level = "weekly_7d"
-    elif recent_14d_count:
-        fallback_level = "weekly_14d"
-    elif recent_30d_count:
-        fallback_level = "weekly_30d"
     elif confidence_relaxation_used:
         fallback_level = "weekly_low_confidence_fresh"
     else:
@@ -333,6 +327,8 @@ def _weekly_rejection_reason(item: dict[str, Any], run_date: date) -> str | None
         return "future_date"
     if quality == "older_than_30d":
         return "older_than_30d"
+    if quality in {"recent_14d", "recent_30d"}:
+        return "older_than_7d"
     if quality == "unknown":
         return "unknown_date"
     if re.search(r"\bto enable\.|\be\.g\.|\(e\.g\.|\(\s*$", text, flags=re.IGNORECASE):
