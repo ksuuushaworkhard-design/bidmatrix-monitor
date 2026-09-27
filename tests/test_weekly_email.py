@@ -87,12 +87,12 @@ def test_weekly_email_html_contains_links_and_external_sections() -> None:
 def test_weekly_email_launch_intro_appears_only_in_first_official_email() -> None:
     launch_digest = {
         **_digest(),
-        "run_date": "2026-09-21",
+        "run_date": "2026-09-28",
         "include_launch_intro": True,
     }
     later_digest = {
         **_digest(),
-        "run_date": "2026-09-28",
+        "run_date": "2026-10-05",
         "include_launch_intro": False,
     }
 

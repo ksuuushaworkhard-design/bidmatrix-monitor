@@ -23,7 +23,7 @@ class WeeklyEmailError(RuntimeError):
 
 WEEKLY_EMAIL_TARGET_ITEMS = 5
 WEEKLY_EMAIL_MINIMUM_EXTERNAL_ITEMS = 3
-WEEKLY_EMAIL_LAUNCH_DATE = date(2026, 9, 21)
+WEEKLY_EMAIL_LAUNCH_DATE = date(2026, 9, 28)
 WEEKLY_EMAIL_LAUNCH_INTRO = (
     "Hi everyone! 👋 Ksenia here, Marketing Manager at BidMatrix.\n\n"
     "Thanks to vibe coding, we no longer need to browse dozens of industry publications or scroll through "
