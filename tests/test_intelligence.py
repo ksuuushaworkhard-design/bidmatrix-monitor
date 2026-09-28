@@ -7,6 +7,7 @@ from bidmatrix_monitor.models import MonitorConfig, NewsItem, OutputSettings, Se
 from bidmatrix_monitor.render import render_markdown, _event_line, write_report
 from bidmatrix_monitor.weekly import build_weekly_digest, render_weekly_markdown
 from bidmatrix_monitor import delivery as delivery_module
+from bidmatrix_monitor import exa_client as exa_client_module
 from bidmatrix_monitor.delivery import _send_telegram, _telegram_message, _telegram_quality_gate_reasons
 from bidmatrix_monitor.exa_client import ExaCollectionStats, ExaMonitorClient
 
@@ -1277,6 +1278,93 @@ def test_exa_failure_path_records_errors() -> None:
     assert report.diagnostics["exa_errors"] == ["Mobile UA: timeout"]
 
 
+def _resilience_client() -> ExaMonitorClient:
+    config = MonitorConfig(
+        brand_name="BidMatrix",
+        brand_description="Adtech",
+        search=SearchSettings(daily_total_budget_seconds=240),
+        outputs=OutputSettings(min_relevance_score=5),
+        topics=(Topic(id="a", label="Adtech", query="adtech"),),
+    )
+    client = object.__new__(ExaMonitorClient)
+    client._config = config
+    client._debug_exa = False
+    client._last_errors = []
+    client._stats = ExaCollectionStats()
+    client._query_counts = {}
+    client._layer_result_counts = {}
+    client._seen_raw_urls = set()
+    client._fresh_items_collected = 0
+    client._collection_started_at = exa_client_module.time.monotonic()
+    client._consecutive_blocked_errors = 0
+    client._circuit_open = False
+    client._last_query_finished_at = None
+    return client
+
+
+def test_exa_client_opens_circuit_after_two_cloudflare_blocks(monkeypatch, capsys) -> None:
+    client = _resilience_client()
+
+    class BlockedExa:
+        calls = 0
+
+        def set_request_timeout(self, seconds):
+            pass
+
+        def search(self, *args, **kwargs):
+            self.calls += 1
+            raise ValueError("Request failed with status code 403: Attention Required! Cloudflare: You have been blocked")
+
+    blocked_exa = BlockedExa()
+    client._exa = blocked_exa
+    monkeypatch.setattr(exa_client_module.time, "sleep", lambda seconds: None)
+    topic = Topic(id="a", label="Adtech", query="adtech")
+
+    for _ in range(2):
+        try:
+            client.search_topic_layer(topic, "daily_fresh_signals")
+        except ValueError:
+            pass
+
+    assert client.search_topic_layer(topic, "daily_fresh_signals") == []
+    assert blocked_exa.calls == 2
+    assert client.collection_stats()["exa_blocked"] is True
+    assert "EXA_CIRCUIT_OPEN reason=cloudflare_403" in capsys.readouterr().out
+
+
+def test_exa_client_retries_timeout_once(monkeypatch) -> None:
+    client = _resilience_client()
+
+    class Output:
+        content = {"developments": []}
+        grounding = []
+
+    class Response:
+        output = Output()
+
+    class FlakyExa:
+        calls = 0
+
+        def set_request_timeout(self, seconds):
+            pass
+
+        def search(self, *args, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                raise TimeoutError("temporary timeout")
+            return Response()
+
+    flaky_exa = FlakyExa()
+    client._exa = flaky_exa
+    monkeypatch.setattr(exa_client_module.time, "sleep", lambda seconds: None)
+
+    assert client.search_topic_layer(Topic(id="a", label="Adtech", query="adtech"), "daily_fresh_signals") == []
+    assert flaky_exa.calls == 2
+    stats = client.collection_stats()
+    assert stats["exa_retries_count"] == 1
+    assert stats["exa_timeouts_count"] == 1
+
+
 def test_exa_client_fails_open_when_market_watch_layer_times_out() -> None:
     config = MonitorConfig(
         brand_name="BidMatrix",
@@ -1333,6 +1421,9 @@ def test_exa_client_skips_market_watch_when_fresh_layer_is_sufficient() -> None:
     client._seen_raw_urls = set()
     client._fresh_items_collected = 0
     client._collection_started_at = 0.0
+    client._consecutive_blocked_errors = 0
+    client._circuit_open = False
+    client._last_query_finished_at = None
 
     topic = Topic(id="a", label="Adtech", query="adtech")
     first = NewsItem(topic_id="a", topic_label="Adtech", title="One", url="https://example.com/one")

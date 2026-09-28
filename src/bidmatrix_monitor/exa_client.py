@@ -91,6 +91,8 @@ class ExaCollectionStats:
     market_watch_queries_run: int = 0
     market_watch_results: int = 0
     budget_exceeded: bool = False
+    blocked: bool = False
+    retries_count: int = 0
 
 
 class TimeoutExa(Exa):
@@ -188,6 +190,9 @@ class ExaMonitorClient:
         self._layer_result_counts: dict[str, int] = {}
         self._seen_raw_urls: set[str] = set()
         self._fresh_items_collected = 0
+        self._consecutive_blocked_errors = 0
+        self._circuit_open = False
+        self._last_query_finished_at: float | None = None
 
     def search_topic(self, topic: Topic) -> list[NewsItem]:
         items: list[NewsItem] = []
@@ -264,6 +269,8 @@ class ExaMonitorClient:
             "exa_market_watch_queries_run": self._stats.market_watch_queries_run,
             "exa_market_watch_results": self._stats.market_watch_results,
             "exa_budget_exceeded": self._stats.budget_exceeded,
+            "exa_blocked": self._stats.blocked,
+            "exa_retries_count": self._stats.retries_count,
         }
 
     def print_collection_summary(self) -> None:
@@ -273,57 +280,98 @@ class ExaMonitorClient:
         print(f"EXA_UNIQUE_RESULTS={stats['exa_unique_results']}")
         print(f"EXA_ERRORS_COUNT={stats['exa_errors_count']}")
         print(f"EXA_TIMEOUTS_COUNT={stats['exa_timeouts_count']}")
+        print(f"EXA_BLOCKED={stats['exa_blocked']}")
+        print(f"EXA_RETRIES_COUNT={stats['exa_retries_count']}")
         print(f"EXA_TOTAL_DURATION_SECONDS={stats['exa_total_duration_seconds']}")
 
     def search_topic_layer(self, topic: Topic, layer: str, *, num_results: int | None = None) -> list[NewsItem]:
         settings = self._config.search
-        if self._budget_exceeded():
+        if self._budget_exceeded() or getattr(self, "_circuit_open", False):
             return []
 
         timeout_seconds = _layer_timeout_seconds(settings, layer)
         query = self._build_query(topic, layer)
         query_label = topic.label if layer != "market_watch_recent" else topic.query
-        start = time.monotonic()
-        self._stats.total_queries += 1
-        self._query_counts[layer] = self._query_counts.get(layer, 0) + 1
-        self._exa.set_request_timeout(timeout_seconds)
-        print(f"EXA_QUERY_START layer={layer} topic={query_label} timeout={timeout_seconds}")
-        try:
-            response = self._exa.search(
-                query,
-                type=settings.type,
-                category=settings.category,
-                num_results=num_results or settings.num_results_per_topic,
-                output_schema=OUTPUT_SCHEMA,
-                contents={
-                    "highlights": {
-                        "max_characters": settings.highlight_max_characters,
-                    }
-                },
-            )
-            items = _items_from_response(response, topic, layer)
-            duration = round(time.monotonic() - start, 2)
-            self._stats.total_raw_results += len(items)
-            self._layer_result_counts[layer] = self._layer_result_counts.get(layer, 0) + len(items)
-            for item in items:
-                self._seen_raw_urls.add(item.normalized_url)
-            print(f"EXA_QUERY_DONE layer={layer} result_count={len(items)} duration={duration}")
-            return items[: _layer_result_cap(settings, layer)]
-        except Exception as exc:
-            duration = round(time.monotonic() - start, 2)
-            self._stats.errors_count += 1
-            if isinstance(exc, (TimeoutError, requests.Timeout)):
-                self._stats.timeouts_count += 1
+        self._pace_requests()
+        for attempt in range(2):
+            start = time.monotonic()
+            self._stats.total_queries += 1
+            if attempt == 0:
+                self._query_counts[layer] = self._query_counts.get(layer, 0) + 1
+            self._exa.set_request_timeout(timeout_seconds)
             print(
-                f"EXA_QUERY_ERROR layer={layer} error_type={type(exc).__name__} duration={duration}"
+                f"EXA_QUERY_START layer={layer} topic={query_label} "
+                f"timeout={timeout_seconds} attempt={attempt + 1}"
             )
-            raise
+            try:
+                response = self._exa.search(
+                    query,
+                    type=settings.type,
+                    category=settings.category,
+                    num_results=num_results or settings.num_results_per_topic,
+                    output_schema=OUTPUT_SCHEMA,
+                    contents={
+                        "highlights": {
+                            "max_characters": settings.highlight_max_characters,
+                        }
+                    },
+                )
+                self._last_query_finished_at = time.monotonic()
+                self._consecutive_blocked_errors = 0
+                items = _items_from_response(response, topic, layer)
+                duration = round(time.monotonic() - start, 2)
+                self._stats.total_raw_results += len(items)
+                self._layer_result_counts[layer] = self._layer_result_counts.get(layer, 0) + len(items)
+                for item in items:
+                    self._seen_raw_urls.add(item.normalized_url)
+                print(f"EXA_QUERY_DONE layer={layer} result_count={len(items)} duration={duration}")
+                return items[: _layer_result_cap(settings, layer)]
+            except Exception as exc:
+                self._last_query_finished_at = time.monotonic()
+                duration = round(time.monotonic() - start, 2)
+                self._stats.errors_count += 1
+                if isinstance(exc, (TimeoutError, requests.Timeout)):
+                    self._stats.timeouts_count += 1
+                blocked = _is_cloudflare_block(exc)
+                self._register_blocked_error(blocked)
+                print(
+                    f"EXA_QUERY_ERROR layer={layer} error_type={type(exc).__name__} "
+                    f"duration={duration} blocked={blocked}"
+                )
+                if attempt == 0 and _is_retryable_exa_error(exc) and not getattr(self, "_circuit_open", False):
+                    self._stats.retries_count += 1
+                    delay = 2
+                    print(f"EXA_QUERY_RETRY layer={layer} delay_seconds={delay}")
+                    time.sleep(delay)
+                    continue
+                raise
+
+        return []
+
+    def _pace_requests(self) -> None:
+        if getattr(self, "_last_query_finished_at", None) is None:
+            return
+        remaining = 0.5 - (time.monotonic() - self._last_query_finished_at)
+        if remaining > 0:
+            time.sleep(remaining)
+
+    def _register_blocked_error(self, blocked: bool) -> None:
+        if not blocked:
+            self._consecutive_blocked_errors = 0
+            return
+        self._consecutive_blocked_errors = getattr(self, "_consecutive_blocked_errors", 0) + 1
+        self._stats.blocked = True
+        if self._consecutive_blocked_errors >= 2:
+            self._circuit_open = True
+            print("EXA_CIRCUIT_OPEN reason=cloudflare_403 consecutive_errors=2")
 
     def _record_layer_error(self, topic_label: str, layer: str, exc: Exception) -> None:
         message = f"{topic_label} [{layer}]: {exc}"
         self._last_errors.append(message)
 
     def _can_run_layer(self, layer: str) -> bool:
+        if getattr(self, "_circuit_open", False):
+            return False
         settings = self._config.search
         if layer == "market_watch_recent":
             return (
@@ -341,6 +389,8 @@ class ExaMonitorClient:
         )
 
     def _budget_exceeded(self) -> bool:
+        if getattr(self, "_circuit_open", False):
+            return True
         elapsed = time.monotonic() - self._collection_started_at
         if elapsed >= self._config.search.daily_total_budget_seconds:
             if not self._stats.budget_exceeded:
@@ -396,6 +446,22 @@ class ExaMonitorClient:
             "context for market positioning, partner/competitor tracking, or recurring trends. Do not treat "
             "undated evergreen content as daily news. Prefer concrete named signals over abstract thought leadership."
         )
+
+
+def _is_cloudflare_block(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return "status code 403" in message and (
+        "cloudflare" in message or "you have been blocked" in message or "attention required" in message
+    )
+
+
+def _is_retryable_exa_error(exc: Exception) -> bool:
+    if _is_cloudflare_block(exc):
+        return False
+    if isinstance(exc, (TimeoutError, requests.Timeout)):
+        return True
+    message = str(exc).lower()
+    return "status code 429" in message or "too many requests" in message
 
 
 def _layer_domains(sources, layer: str) -> tuple[str, ...]:
