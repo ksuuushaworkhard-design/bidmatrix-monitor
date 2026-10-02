@@ -47,7 +47,9 @@ def test_weekly_email_text_is_external_audience_friendly() -> None:
 
     assert text.startswith("Subject: BidMatrix Weekly Growth Brief")
     assert "This week's market story:" in text
-    assert "What this means for marketers:" in text
+    assert "What this means for marketers:" not in text
+    assert "Reply to Ksusha" not in text
+    assert "Reply to Ksenia" not in text
     assert "Moves worth reading:" in text
     assert "How to use it:" in text
     assert "Ideas to use this week" not in text
@@ -68,7 +70,9 @@ def test_weekly_email_html_contains_links_and_external_sections() -> None:
     assert ">BidMatrix</p>" in html
     assert "This week&#x27;s focus:" in html
     assert "This week's market story" in html
-    assert "For marketers" in html
+    assert "For marketers" not in html
+    assert "Reply to Ksusha" not in html
+    assert "Reply to Ksenia" not in html
     assert "Moves worth reading" in html
     assert "Read source: AdExchanger" in html
     assert "font-family:Oswald, Oswaldo" in html

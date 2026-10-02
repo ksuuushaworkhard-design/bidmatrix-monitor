@@ -607,9 +607,6 @@ def render_weekly_email_text(digest: dict[str, Any]) -> str:
         "This week's market story:",
         _takeaway(digest),
         "",
-        "What this means for marketers:",
-        _why_it_matters(digest),
-        "",
         "Moves worth reading:",
     ])
 
@@ -627,7 +624,6 @@ def render_weekly_email_text(digest: dict[str, Any]) -> str:
     else:
         lines.extend(["No weekly moves were ready for this email preview.", ""])
 
-    lines.extend(["Prepared for the BidMatrix team. Reply to Ksusha with feedback or useful sources to add."])
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -675,9 +671,7 @@ def render_weekly_email_html(digest: dict[str, Any]) -> str:
                   <tr>
                     <td style="padding:18px 20px;">
                       <p style="margin:0 0 6px; color:#09CAB6; font-size:14px; font-weight:bold;">This week's market story</p>
-                      <p style="font-size:16px; line-height:1.55; margin:0 0 14px; color:#000000;">{html.escape(_takeaway(digest))}</p>
-                      <p style="margin:0 0 6px; color:#09CAB6; font-size:14px; font-weight:bold;">For marketers</p>
-                      <p style="font-size:16px; line-height:1.55; margin:0; color:#000000;">{html.escape(_why_it_matters(digest))}</p>
+                      <p style="font-size:16px; line-height:1.55; margin:0; color:#000000;">{html.escape(_takeaway(digest))}</p>
                     </td>
                   </tr>
                 </table>
@@ -687,11 +681,6 @@ def render_weekly_email_html(digest: dict[str, Any]) -> str:
               <td style="padding:12px 32px 4px;">
                 <h2 style="font-family:Oswald, Oswaldo, Arial, Helvetica, sans-serif; font-weight:400; font-size:24px; margin:18px 0 14px; color:#000000;">Moves worth reading</h2>
                 {item_blocks}
-              </td>
-            </tr>
-            <tr>
-              <td style="padding:8px 32px 30px;">
-                <p style="font-size:13px; line-height:1.5; color:#000000; margin:18px 0 0;">Prepared for the BidMatrix team. Reply to Ksusha with feedback or useful sources to add.</p>
               </td>
             </tr>
           </table>
