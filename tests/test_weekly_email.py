@@ -842,8 +842,9 @@ def test_weekly_email_test_send_uses_resend_payload(monkeypatch, tmp_path: Path)
     )
     captured: dict[str, object] = {}
 
-    def fake_send(payload: dict) -> dict:
+    def fake_send(payload: dict, *, idempotency_key=None) -> dict:
         captured["payload"] = payload
+        captured["idempotency_key"] = idempotency_key
         return {"id": "email_123"}
 
     monkeypatch.setattr(weekly_email, "_send_resend_email", fake_send)
@@ -852,6 +853,9 @@ def test_weekly_email_test_send_uses_resend_payload(monkeypatch, tmp_path: Path)
 
     assert result["mode"] == "sent"
     assert result["resend_response"] == {"id": "email_123"}
+    assert result["resend_responses"] == [{"id": "email_123"}]
+    assert result["batch_count"] == 1
+    assert str(captured["idempotency_key"]).startswith("weekly-email/undated/1/")
     assert captured["payload"] == {
         "from": "BidMatrix <weekly@updates.bid-matrix.com>",
         "to": ["BidMatrix <weekly@updates.bid-matrix.com>"],
@@ -861,6 +865,47 @@ def test_weekly_email_test_send_uses_resend_payload(monkeypatch, tmp_path: Path)
         "text": "Hello\n",
     }
     assert result["to"] == "ksenia@bid-matrix.com, mark@bid-matrix.com, nastya@bid-matrix.com"
+
+
+def test_weekly_email_batches_large_recipient_list_without_duplicates(monkeypatch, tmp_path: Path) -> None:
+    manifest_path = _preview_files(
+        tmp_path,
+        {
+            "run_date": "2026-10-05",
+            "items_count": 5,
+            "minimum_external_items": 3,
+            "limited_signal_volume": False,
+            "external_send_ready": True,
+        },
+    )
+    recipients = [f"person{index}@bid-matrix.com" for index in range(113)]
+    recipients.append("PERSON0@bid-matrix.com")
+    monkeypatch.setenv("RESEND_API_KEY", "re_test")
+    monkeypatch.setenv("WEEKLY_EMAIL_FROM", "BidMatrix <weekly@updates.bid-matrix.com>")
+    monkeypatch.setenv("WEEKLY_EMAIL_TO", ",".join(recipients))
+    calls: list[tuple[dict, str | None]] = []
+
+    def fake_send(payload: dict, *, idempotency_key=None) -> dict:
+        calls.append((payload, idempotency_key))
+        return {"id": f"email_{len(calls)}"}
+
+    monkeypatch.setattr(weekly_email, "_send_resend_email", fake_send)
+
+    result = weekly_email.send_weekly_email_test(manifest_path)
+
+    assert result["mode"] == "sent"
+    assert result["batch_count"] == 3
+    assert len(result["recipients"]) == 113
+    assert [len(payload["bcc"]) for payload, _ in calls] == [49, 49, 15]
+    assert len({recipient.lower() for payload, _ in calls for recipient in payload["bcc"]}) == 113
+    assert all(len(payload["to"]) + len(payload["bcc"]) <= 50 for payload, _ in calls)
+    assert len({key for _, key in calls}) == 3
+    assert all(str(key).startswith(f"weekly-email/2026-10-05/{index}/") for index, (_, key) in enumerate(calls, 1))
+    assert result["resend_responses"] == [
+        {"id": "email_1"},
+        {"id": "email_2"},
+        {"id": "email_3"},
+    ]
 
 
 def test_weekly_email_test_send_skips_when_items_are_below_external_minimum(monkeypatch, tmp_path: Path) -> None:
