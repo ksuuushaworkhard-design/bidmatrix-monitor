@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
+import hashlib
 import html
 import json
 import os
@@ -23,6 +24,7 @@ class WeeklyEmailError(RuntimeError):
 
 WEEKLY_EMAIL_TARGET_ITEMS = 5
 WEEKLY_EMAIL_MINIMUM_EXTERNAL_ITEMS = 3
+WEEKLY_EMAIL_MAX_BCC_RECIPIENTS = 49
 WEEKLY_EMAIL_LAUNCH_DATE = date(2026, 9, 28)
 WEEKLY_EMAIL_LAUNCH_INTRO = (
     "Hi everyone! 👋 Ksenia here, Marketing Manager at BidMatrix.\n\n"
@@ -519,12 +521,22 @@ def send_weekly_email_test(
         "items_count": manifest.get("items_count"),
         "minimum_external_items": manifest.get("minimum_external_items"),
         "external_send_ready": manifest.get("external_send_ready"),
+        "batch_count": len(_recipient_batches(recipients)),
     }
     if dry_run:
         return result
 
-    response = _send_resend_email(payload)
-    return {**result, "resend_response": response}
+    responses: list[dict[str, Any]] = []
+    batches = _recipient_batches(recipients)
+    for batch_index, batch in enumerate(batches, start=1):
+        batch_payload = {**payload, "bcc": batch}
+        idempotency_key = _weekly_email_idempotency_key(manifest, subject, batch, batch_index)
+        responses.append(_send_resend_email(batch_payload, idempotency_key=idempotency_key))
+    return {
+        **result,
+        "resend_response": responses[0] if len(responses) == 1 else responses,
+        "resend_responses": responses,
+    }
 
 
 def _weekly_email_send_skip_reason(manifest: dict[str, Any]) -> str | None:
@@ -907,7 +919,34 @@ def _email_recipients(value: str) -> list[str]:
     invalid = [recipient for recipient in recipients if "@" not in recipient or recipient.startswith("@")]
     if invalid:
         raise WeeklyEmailError(f"WEEKLY_EMAIL_TO contains invalid recipient(s): {', '.join(invalid)}")
-    return recipients
+    unique: list[str] = []
+    seen: set[str] = set()
+    for recipient in recipients:
+        key = recipient.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(recipient)
+    return unique
+
+
+def _recipient_batches(recipients: list[str]) -> list[list[str]]:
+    return [
+        recipients[index:index + WEEKLY_EMAIL_MAX_BCC_RECIPIENTS]
+        for index in range(0, len(recipients), WEEKLY_EMAIL_MAX_BCC_RECIPIENTS)
+    ]
+
+
+def _weekly_email_idempotency_key(
+    manifest: dict[str, Any],
+    subject: str,
+    recipients: list[str],
+    batch_index: int,
+) -> str:
+    run_date = str(manifest.get("run_date") or "undated")
+    identity = "\n".join([run_date, subject, *[recipient.lower() for recipient in recipients]])
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
+    return f"weekly-email/{run_date}/{batch_index}/{digest}"
 
 
 def _optional_email_recipients(value: str) -> list[str]:
@@ -916,18 +955,25 @@ def _optional_email_recipients(value: str) -> list[str]:
     return _email_recipients(value)
 
 
-def _send_resend_email(payload: dict[str, Any]) -> dict[str, Any]:
+def _send_resend_email(
+    payload: dict[str, Any],
+    *,
+    idempotency_key: str | None = None,
+) -> dict[str, Any]:
     api_key = _required_env("RESEND_API_KEY")
     body = json.dumps(payload).encode("utf-8")
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "User-Agent": "bidmatrix-monitor-weekly-email/0.1",
+    }
+    if idempotency_key:
+        headers["Idempotency-Key"] = idempotency_key
     request = Request(
         "https://api.resend.com/emails",
         data=body,
         method="POST",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "User-Agent": "bidmatrix-monitor-weekly-email/0.1",
-        },
+        headers=headers,
     )
     try:
         with urlopen(request, timeout=30) as response:
