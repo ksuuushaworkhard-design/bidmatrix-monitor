@@ -434,8 +434,10 @@ class ExaMonitorClient:
                 "Prefer named companies, products, conferences, reports, and platforms over broad themes."
             )
         if layer == "market_watch_recent":
+            lookback_days = max(14, int((self._config.search.max_age_hours or 0) / 24))
             return (
-                f"{shared} Search layer: market_watch_recent. Search only the last 7 to 14 days for the strongest "
+                f"{shared} Search layer: market_watch_recent. Search the last 7 days first, then up to "
+                f"{lookback_days} days only when needed to complete a strong weekly selection. Find the strongest "
                 "adjacent or broader market signals worth a concise mobile adtech Market Watch. Prefer concrete "
                 "product launches, measurement changes, AI buying moves, fraud/quality developments, CTV-for-apps "
                 "performance updates, and programmatic in-app shifts from trusted sources."

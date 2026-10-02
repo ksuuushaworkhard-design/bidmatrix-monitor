@@ -173,7 +173,7 @@ def test_build_weekly_email_preview_writes_html_text_and_manifest(monkeypatch, t
     assert manifest["recommended_audience"] == "internal_team"
     assert manifest["run_date"] == "2026-08-14"
     assert manifest["items_count"] == 2
-    assert manifest["minimum_external_items"] == 3
+    assert manifest["minimum_external_items"] == 5
     assert manifest["days"] == 7
     assert manifest["preview_files"]["html"] == str(html_path)
     assert manifest["preview_files"]["text"] == str(text_path)
@@ -433,7 +433,7 @@ def test_weekly_email_preview_uses_distinct_companies_for_main_items(monkeypatch
     assert digest["diagnostics"]["weekly_email_selected_items_count"] == 5
 
 
-def test_weekly_email_preview_keeps_ready_telegram_weekly_digest(
+def test_weekly_email_preview_fills_ready_telegram_weekly_digest_to_five(
     monkeypatch, tmp_path: Path
 ) -> None:
     source_dir = tmp_path / "source-reports"
@@ -514,16 +514,16 @@ def test_weekly_email_preview_keeps_ready_telegram_weekly_digest(
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     text = text_path.read_text(encoding="utf-8")
 
-    assert manifest["items_count"] == 4
+    assert manifest["items_count"] == 5
     assert manifest["external_send_ready"] is True
     assert manifest["limited_signal_volume"] is False
-    assert digest["diagnostics"]["weekly_email_selection_source"] == "weekly_digest"
+    assert digest["diagnostics"]["weekly_email_selection_source"] == "pipeline_selected_items"
     assert "Lifesight" in text
     assert "Unity" in text
     assert "AppsFlyer and Branch" in text
     assert "Google" in text
     assert "Old Context" not in text
-    assert "Adjust" not in text
+    assert "Adjust" in text
     assert "Innovid" not in text
 
 
@@ -567,7 +567,7 @@ def test_weekly_email_manifest_counts_distinct_companies_only(monkeypatch, tmp_p
     assert "Adjust, Adjust" not in text
 
 
-def test_weekly_email_manifest_is_send_ready_with_three_distinct_companies(monkeypatch, tmp_path: Path) -> None:
+def test_weekly_email_manifest_requires_five_distinct_companies(monkeypatch, tmp_path: Path) -> None:
     digest = {
         **_digest(),
         "what_actually_happened": [
@@ -602,9 +602,56 @@ def test_weekly_email_manifest_is_send_ready_with_three_distinct_companies(monke
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
     assert manifest["items_count"] == 3
-    assert manifest["minimum_external_items"] == 3
-    assert manifest["external_send_ready"] is True
+    assert manifest["minimum_external_items"] == 5
+    assert manifest["external_send_ready"] is False
     assert manifest["limited_signal_volume"] is False
+
+
+def test_weekly_email_uses_fresh_items_then_quality_14_and_30_day_fallbacks(tmp_path: Path) -> None:
+    companies_and_dates = [
+        ("AppsFlyer", "2026-10-05"),
+        ("Moloco", "2026-10-01"),
+        ("Liftoff", "2026-09-26"),
+        ("Adjust", "2026-09-21"),
+        ("Kochava", "2026-09-10"),
+    ]
+    items = []
+    domains = {"AppsFlyer": "appsflyer.com", "Moloco": "moloco.com", "Liftoff": "liftoff.io", "Adjust": "adjust.com", "Kochava": "kochava.com"}
+    for company, published_date in companies_and_dates:
+        domain = domains[company]
+        items.append(
+            {
+                "company_or_topic": company,
+                "title": f"{company} released a measurable growth update",
+                "what_happened": (
+                    f"{company} released a concrete measurement and campaign optimization update "
+                    "with clear implications for mobile growth teams and media budgets."
+                ),
+                "url": f"https://{domain}/news/growth-update",
+                "published_date": published_date,
+                "page_type": "news_article",
+                "source_type": "official_company",
+                "score": 10,
+            }
+        )
+    (tmp_path / "bidmatrix-monitor-2026-10-05-curated.json").write_text(
+        json.dumps({"daily_digest_items": items}),
+        encoding="utf-8",
+    )
+
+    result = weekly_email._prefer_pipeline_selected_digest_items(
+        _digest(), tmp_path, 30, date(2026, 10, 5)
+    )
+
+    assert [item["company"] for item in result["what_actually_happened"]] == [
+        "AppsFlyer",
+        "Moloco",
+        "Liftoff",
+        "Adjust",
+        "Kochava",
+    ]
+    assert result["item_count"] == 5
+    assert result["limited_signal_volume"] is False
 
 
 def test_weekly_email_recovers_company_from_generic_topic_subject() -> None:
@@ -685,6 +732,26 @@ def test_weekly_email_fills_priority_shortfall_with_strong_industry_news(monkeyp
             "source_type": "industry_media",
             "score": 10,
         },
+        {
+            "company_or_topic": "AppsFlyer",
+            "title": "AppsFlyer expands measurement coverage",
+            "what_happened": "AppsFlyer expanded attribution coverage so growth teams can connect emerging discovery surfaces to measurable conversions.",
+            "url": "https://www.appsflyer.com/blog/measurement/expanded-attribution",
+            "source_label": "appsflyer.com (high-signal)",
+            "page_type": "news_article",
+            "source_type": "official_company",
+            "score": 10,
+        },
+        {
+            "company_or_topic": "Moloco",
+            "title": "Moloco publishes programmatic growth benchmark",
+            "what_happened": "Moloco published a programmatic growth benchmark comparing campaign efficiency and expansion opportunities across app categories.",
+            "url": "https://www.moloco.com/blog/programmatic-growth-benchmark",
+            "source_label": "moloco.com (high-signal)",
+            "page_type": "report_page",
+            "source_type": "official_company",
+            "score": 9,
+        },
     ]
     report_path = tmp_path / "bidmatrix-monitor-2026-09-21-curated.json"
     report_path.write_text(json.dumps({"daily_digest_items": selected_items}), encoding="utf-8")
@@ -695,11 +762,13 @@ def test_weekly_email_fills_priority_shortfall_with_strong_industry_news(monkeyp
 
     assert [item["company"] for item in result["what_actually_happened"]] == [
         "Index Exchange",
+        "AppsFlyer",
         "Smadex",
+        "Moloco",
         "DAIVID",
     ]
     assert result["limited_signal_volume"] is False
-    assert result["diagnostics"]["weekly_email_priority_items_count"] == 2
+    assert result["diagnostics"]["weekly_email_priority_items_count"] == 4
     assert result["diagnostics"]["weekly_email_fallback_items_count"] == 1
 
 
@@ -1175,10 +1244,10 @@ def test_weekly_email_test_run_can_refresh_source_report_without_delivery(
 
     output = capsys.readouterr().out
     assert calls == ["print_collection_summary", "email_test_run"]
-    assert seen["max_age_hours"] == 168
+    assert seen["max_age_hours"] == 720
     assert fake_config.search.max_age_hours == 24
     assert "WEEKLY_EMAIL_SOURCE_REFRESH_STARTED" in output
-    assert "lookback_hours=168" in output
+    assert "lookback_hours=720" in output
     assert "WEEKLY_EMAIL_SOURCE_REFRESH_WRITTEN" in output
     assert "WEEKLY_EMAIL_TEST_RUN_FINISHED mode=dry_run" in output
 
@@ -1201,7 +1270,7 @@ def test_weekly_email_source_config_uses_wider_search_without_mutating_daily_con
 
     weekly_config = cli_module._weekly_email_source_config(config, days=7)
 
-    assert weekly_config.search.max_age_hours == 168
+    assert weekly_config.search.max_age_hours == 720
     assert weekly_config.search.num_results_per_topic == 10
     assert weekly_config.search.max_total_results_per_topic == 14
     assert weekly_config.search.max_total_results_per_layer == 60

@@ -404,7 +404,9 @@ def _weekly_email_source_config(config, days: int):
     if search is None:
         return config
 
-    weekly_hours = max(1, int(days)) * 24
+    # The weekly email prefers the last seven days, but keeps a trusted 30-day
+    # reserve so a quiet week can still produce five useful, distinct moves.
+    weekly_hours = max(30 * 24, max(1, int(days)) * 24)
     current_hours = getattr(search, "max_age_hours", None)
     if current_hours is not None:
         weekly_hours = max(weekly_hours, int(current_hours))

@@ -23,7 +23,8 @@ class WeeklyEmailError(RuntimeError):
 
 
 WEEKLY_EMAIL_TARGET_ITEMS = 5
-WEEKLY_EMAIL_MINIMUM_EXTERNAL_ITEMS = 3
+WEEKLY_EMAIL_MINIMUM_EXTERNAL_ITEMS = 5
+WEEKLY_EMAIL_FALLBACK_DAYS = 30
 WEEKLY_EMAIL_MAX_BCC_RECIPIENTS = 49
 WEEKLY_EMAIL_LAUNCH_DATE = date(2026, 9, 28)
 WEEKLY_EMAIL_LAUNCH_INTRO = (
@@ -50,8 +51,13 @@ def build_weekly_email_preview(
 
     digest_source_dir = Path(source_report_dir) if source_report_dir else output_dir
     digest = build_weekly_digest(digest_source_dir, days)
-    if len(_top_items(digest)) < WEEKLY_EMAIL_MINIMUM_EXTERNAL_ITEMS:
-        digest = _prefer_pipeline_selected_digest_items(digest, digest_source_dir, days, output_date)
+    if len(_top_items(digest)) < WEEKLY_EMAIL_TARGET_ITEMS:
+        digest = _prefer_pipeline_selected_digest_items(
+            digest,
+            digest_source_dir,
+            max(days, WEEKLY_EMAIL_FALLBACK_DAYS),
+            output_date,
+        )
     else:
         diagnostics = dict(digest.get("diagnostics") or {})
         diagnostics["weekly_email_selection_source"] = "weekly_digest"
@@ -128,8 +134,14 @@ def _prefer_pipeline_selected_digest_items(
         return digest
 
     source_item_count = len(pipeline_items)
-    priority_items = _distinct_pipeline_company_items(_priority_pipeline_company_items(pipeline_items))
-    fallback_items = _quality_fallback_pipeline_items(pipeline_items, priority_items)
+    quality_items = [
+        item
+        for item in pipeline_items
+        if _is_quality_fallback_item(item) and _pipeline_quality_rank(item, output_date)[0] > 0
+    ]
+    quality_items.sort(key=lambda item: _pipeline_quality_rank(item, output_date), reverse=True)
+    priority_items = _distinct_pipeline_company_items(_priority_pipeline_company_items(quality_items))
+    fallback_items = _quality_fallback_pipeline_items(quality_items, priority_items)
     selected_items = _distinct_pipeline_company_items(priority_items + fallback_items)[:WEEKLY_EMAIL_TARGET_ITEMS]
     developments = _email_developments_from_pipeline_items(selected_items)
     if not developments:
@@ -143,15 +155,10 @@ def _prefer_pipeline_selected_digest_items(
                 "weekly_email_minimum_external_items": WEEKLY_EMAIL_MINIMUM_EXTERNAL_ITEMS,
             }
         )
-        return {
-            **digest,
-            "item_count": 0,
-            "limited_signal_volume": True,
-            "week_in_one_line": "No strong developments from priority companies passed the weekly quality gate.",
-            "what_actually_happened": [],
-            "why_it_matters_for_bidmatrix": [],
-            "diagnostics": diagnostics,
-        }
+        return {**digest, "diagnostics": diagnostics}
+
+    if len(developments) < WEEKLY_EMAIL_TARGET_ITEMS:
+        developments = _merge_distinct_developments(_top_items(digest), developments)
 
     diagnostics = dict(digest.get("diagnostics") or {})
     diagnostics.update(
@@ -179,6 +186,30 @@ def _prefer_pipeline_selected_digest_items(
     }
 
 
+def _merge_distinct_developments(
+    primary: list[dict[str, Any]],
+    fallback: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    selected: list[dict[str, Any]] = []
+    seen_companies: set[str] = set()
+    seen_urls: set[str] = set()
+    for item in [*primary, *fallback]:
+        company_key = _company_dedupe_key(_company(item))
+        url = _url_or_source(item).split("?", 1)[0].rstrip("/").lower()
+        if company_key and company_key in seen_companies:
+            continue
+        if url and url in seen_urls:
+            continue
+        selected.append(item)
+        if company_key:
+            seen_companies.add(company_key)
+        if url:
+            seen_urls.add(url)
+        if len(selected) >= WEEKLY_EMAIL_TARGET_ITEMS:
+            break
+    return selected
+
+
 def _load_pipeline_selected_items(report_dir: Path, days: int, output_date: date) -> list[dict[str, Any]]:
     cutoff = output_date - timedelta(days=max(1, days) - 1)
     selected: list[dict[str, Any]] = []
@@ -204,6 +235,7 @@ def _load_pipeline_selected_items(report_dir: Path, days: int, output_date: date
                 if isinstance(item, dict):
                     enriched = dict(item)
                     enriched.setdefault("_weekly_email_source_report", str(path))
+                    enriched.setdefault("_weekly_email_source_report_date", report_date.isoformat())
                     enriched.setdefault("_weekly_email_source_section", key)
                     selected.append(enriched)
     return _dedupe_pipeline_items(selected)
@@ -264,7 +296,7 @@ def _quality_fallback_pipeline_items(
     items: list[dict[str, Any]],
     priority_items: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    fallback_needed = max(0, WEEKLY_EMAIL_MINIMUM_EXTERNAL_ITEMS - len(priority_items))
+    fallback_needed = max(0, WEEKLY_EMAIL_TARGET_ITEMS - len(priority_items))
     if fallback_needed == 0:
         return []
     priority_keys = {_company_dedupe_key(_company_from_pipeline_item(item)) for item in priority_items}
@@ -284,19 +316,44 @@ def _quality_fallback_pipeline_items(
 
 def _is_quality_fallback_item(item: dict[str, Any]) -> bool:
     page_type = str(item.get("page_type") or "").strip().lower()
-    if page_type not in {"news_article", "press_release", "report_page", "thought_leadership"}:
+    if page_type and page_type not in {"news_article", "press_release", "report_page", "thought_leadership"}:
         return False
     source_type = str(item.get("source_type") or "").strip().lower()
-    if source_type not in {"industry_media", "official_company"}:
+    if source_type and source_type not in {"industry_media", "official_company"}:
         return False
-    if (_int_value(item.get("score")) or 0) < 8:
+    score = _int_value(item.get("score"))
+    if score is not None and score < 8:
         return False
     url = str(item.get("url") or item.get("source_url") or "").strip()
     domain = urlparse(url).netloc.lower().removeprefix("www.")
     if not domain or domain.startswith("status.") or domain not in _weekly_email_high_signal_domains():
         return False
     description = str(item.get("what_happened") or item.get("summary") or "").strip()
-    return len(description) >= 60
+    minimum_description_length = 60 if page_type or source_type else 35
+    return len(description) >= minimum_description_length
+
+
+def _pipeline_quality_rank(item: dict[str, Any], output_date: date) -> tuple[int, int, int]:
+    published = _pipeline_item_date(item)
+    age_days = (output_date - published).days if published else WEEKLY_EMAIL_FALLBACK_DAYS + 1
+    if age_days <= 7:
+        freshness_rank = 3
+    elif age_days <= 14:
+        freshness_rank = 2
+    elif age_days <= WEEKLY_EMAIL_FALLBACK_DAYS:
+        freshness_rank = 1
+    else:
+        freshness_rank = 0
+    confidence_rank = {"high": 2, "medium": 1}.get(str(item.get("confidence") or "medium").lower(), 0)
+    return (freshness_rank, _int_value(item.get("score")) or 0, confidence_rank)
+
+
+def _pipeline_item_date(item: dict[str, Any]) -> date | None:
+    value = str(item.get("published_date") or item.get("_weekly_email_source_report_date") or "").strip()
+    try:
+        return date.fromisoformat(value[:10])
+    except ValueError:
+        return None
 
 
 @lru_cache(maxsize=1)
