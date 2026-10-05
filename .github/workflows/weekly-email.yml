@@ -39,6 +39,7 @@ jobs:
           EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           WEEKLY_EMAIL_FROM: ${{ secrets.WEEKLY_EMAIL_FROM }}
+          WEEKLY_EMAIL_SEGMENT_ID: ${{ secrets.WEEKLY_EMAIL_SEGMENT_ID }}
           WEEKLY_EMAIL_TO: ${{ secrets.WEEKLY_EMAIL_TO || secrets.WEEKLY_EMAIL_TEST_TO }}
         run: bidmatrix-monitor --weekly-email-test-run --weekly-email-refresh-source-report
 

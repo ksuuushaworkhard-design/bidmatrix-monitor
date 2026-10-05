@@ -940,6 +940,76 @@ def test_weekly_email_test_send_uses_resend_payload(monkeypatch, tmp_path: Path)
     assert result["to"] == "ksenia@bid-matrix.com, mark@bid-matrix.com, nastya@bid-matrix.com"
 
 
+def test_weekly_email_uses_resend_broadcast_segment_with_unsubscribe(monkeypatch, tmp_path: Path) -> None:
+    manifest_path = _preview_files(
+        tmp_path,
+        {
+            "run_date": "2026-10-12",
+            "items_count": 5,
+            "minimum_external_items": 5,
+            "limited_signal_volume": False,
+            "external_send_ready": True,
+        },
+    )
+    monkeypatch.setenv("RESEND_API_KEY", "re_test")
+    monkeypatch.setenv("WEEKLY_EMAIL_FROM", "BidMatrix <weekly@updates.bid-matrix.com>")
+    monkeypatch.setenv("WEEKLY_EMAIL_SEGMENT_ID", "segment_team")
+    monkeypatch.delenv("WEEKLY_EMAIL_TO", raising=False)
+    captured: dict[str, object] = {}
+
+    def fake_send(payload: dict, *, idempotency_key=None) -> dict:
+        captured["payload"] = payload
+        captured["idempotency_key"] = idempotency_key
+        return {"id": "broadcast_123"}
+
+    monkeypatch.setattr(weekly_email, "_send_resend_broadcast", fake_send)
+    monkeypatch.setattr(
+        weekly_email,
+        "_send_resend_email",
+        lambda *args, **kwargs: pytest.fail("broadcast delivery must not use transactional email"),
+    )
+
+    result = weekly_email.send_weekly_email_test(manifest_path)
+
+    assert result["mode"] == "sent"
+    assert result["delivery_method"] == "broadcast"
+    assert result["segment_id"] == "segment_team"
+    assert result["batch_count"] == 1
+    assert result["broadcast_response"] == {"id": "broadcast_123"}
+    assert str(captured["idempotency_key"]).startswith("weekly-email-broadcast/2026-10-12/")
+    payload = captured["payload"]
+    assert payload["segment_id"] == "segment_team"
+    assert payload["send"] is True
+    assert "bcc" not in payload
+    assert '{{{RESEND_UNSUBSCRIBE_URL}}}' in payload["html"]
+    assert '{{{RESEND_UNSUBSCRIBE_URL}}}' in payload["text"]
+
+
+def test_weekly_email_broadcast_dry_run_never_sends(monkeypatch, tmp_path: Path) -> None:
+    manifest_path = _preview_files(
+        tmp_path,
+        {
+            "items_count": 5,
+            "minimum_external_items": 5,
+            "limited_signal_volume": False,
+            "external_send_ready": True,
+        },
+    )
+    monkeypatch.setenv("WEEKLY_EMAIL_FROM", "BidMatrix <weekly@updates.bid-matrix.com>")
+    monkeypatch.setenv("WEEKLY_EMAIL_SEGMENT_ID", "segment_test")
+    monkeypatch.setattr(
+        weekly_email,
+        "_send_resend_broadcast",
+        lambda *args, **kwargs: pytest.fail("dry run must not create or send a broadcast"),
+    )
+
+    result = weekly_email.send_weekly_email_test(manifest_path, dry_run=True)
+
+    assert result["mode"] == "dry_run"
+    assert result["delivery_method"] == "broadcast"
+    assert result["broadcast_payload"]["send"] is True
+
+
 def test_weekly_email_batches_large_recipient_list_without_duplicates(monkeypatch, tmp_path: Path) -> None:
     manifest_path = _preview_files(
         tmp_path,
@@ -1353,6 +1423,7 @@ def test_weekly_email_github_workflow_runs_monday_noon_moscow_without_telegram()
     assert "bidmatrix-monitor --weekly-email-test-run --weekly-email-refresh-source-report" in workflow
     assert "RESEND_API_KEY" in workflow
     assert "WEEKLY_EMAIL_FROM" in workflow
+    assert "WEEKLY_EMAIL_SEGMENT_ID" in workflow
     assert "WEEKLY_EMAIL_TO" in workflow
     assert "TELEGRAM_BOT_TOKEN" not in workflow
     assert "BIDMATRIX_DELIVERY_CHANNEL" not in workflow
