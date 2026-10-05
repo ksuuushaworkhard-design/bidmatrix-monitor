@@ -530,6 +530,7 @@ def send_weekly_email_test(
 
     subject = str(manifest.get("email_subject") or "BidMatrix Weekly Growth Brief")
     recipient_value = _weekly_email_recipient_value()
+    segment_id = os.environ.get("WEEKLY_EMAIL_SEGMENT_ID", "").strip()
     skip_reason = _weekly_email_send_skip_reason(manifest)
     if skip_reason and not dry_run:
         return {
@@ -551,9 +552,46 @@ def send_weekly_email_test(
         }
 
     sender = _required_env("WEEKLY_EMAIL_FROM")
-    recipients = _email_recipients(_required_weekly_email_recipients())
     html_body = html_path.read_text(encoding="utf-8")
     text_body = text_path.read_text(encoding="utf-8")
+
+    if segment_id:
+        broadcast_payload = {
+            "segment_id": segment_id,
+            "from": sender,
+            "subject": subject,
+            "html": _with_broadcast_unsubscribe_html(html_body),
+            "text": _with_broadcast_unsubscribe_text(text_body),
+            "send": True,
+        }
+        result = {
+            "mode": "dry_run" if dry_run else "sent",
+            "delivery_method": "broadcast",
+            "segment_id": segment_id,
+            "to": "Resend segment",
+            "recipients": [],
+            "from": sender,
+            "subject": subject,
+            "manifest_path": str(manifest_file),
+            "html_path": str(html_path),
+            "text_path": str(text_path),
+            "approval_required": bool(manifest.get("approval_required")),
+            "approved": bool(manifest.get("approved")),
+            "recommended_audience": manifest.get("recommended_audience"),
+            "items_count": manifest.get("items_count"),
+            "minimum_external_items": manifest.get("minimum_external_items"),
+            "external_send_ready": manifest.get("external_send_ready"),
+            "batch_count": 1,
+        }
+        if dry_run:
+            return {**result, "broadcast_payload": broadcast_payload}
+        response = _send_resend_broadcast(
+            broadcast_payload,
+            idempotency_key=_weekly_email_broadcast_idempotency_key(manifest, subject, segment_id),
+        )
+        return {**result, "resend_response": response, "broadcast_response": response}
+
+    recipients = _email_recipients(_required_weekly_email_recipients())
 
     payload = {
         "from": sender,
@@ -565,6 +603,7 @@ def send_weekly_email_test(
     }
     result = {
         "mode": "dry_run" if dry_run else "sent",
+        "delivery_method": "transactional_bcc",
         "to": ", ".join(recipients),
         "recipients": recipients,
         "from": sender,
@@ -995,6 +1034,32 @@ def _weekly_email_idempotency_key(
     return f"weekly-email/{run_date}/{batch_index}/{digest}"
 
 
+def _weekly_email_broadcast_idempotency_key(
+    manifest: dict[str, Any],
+    subject: str,
+    segment_id: str,
+) -> str:
+    run_date = str(manifest.get("run_date") or "undated")
+    identity = "\n".join([run_date, subject, segment_id])
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
+    return f"weekly-email-broadcast/{run_date}/{digest}"
+
+
+def _with_broadcast_unsubscribe_html(html_body: str) -> str:
+    footer = (
+        '<p style="margin:24px 0 0; text-align:center; font-size:12px; line-height:1.5; color:#000000;">'
+        '<a href="{{{RESEND_UNSUBSCRIBE_URL}}}" style="color:#000000; text-decoration:underline;">'
+        "Unsubscribe</a></p>"
+    )
+    if "</body>" in html_body:
+        return html_body.replace("</body>", f"{footer}\n  </body>")
+    return html_body.rstrip() + footer
+
+
+def _with_broadcast_unsubscribe_text(text_body: str) -> str:
+    return text_body.rstrip() + "\n\nUnsubscribe: {{{RESEND_UNSUBSCRIBE_URL}}}\n"
+
+
 def _optional_email_recipients(value: str) -> list[str]:
     if not value.strip():
         return []
@@ -1021,6 +1086,40 @@ def _send_resend_email(
         method="POST",
         headers=headers,
     )
+    try:
+        with urlopen(request, timeout=30) as response:
+            raw = response.read().decode("utf-8")
+    except HTTPError as exc:
+        details = exc.read().decode("utf-8", errors="replace")
+        raise WeeklyEmailError(f"Resend API returned HTTP {exc.code}: {details}") from exc
+    except URLError as exc:
+        raise WeeklyEmailError(f"Resend API request failed: {exc.reason}") from exc
+    return json.loads(raw) if raw else {}
+
+
+def _send_resend_broadcast(
+    payload: dict[str, Any],
+    *,
+    idempotency_key: str | None = None,
+) -> dict[str, Any]:
+    return _post_resend_json("https://api.resend.com/broadcasts", payload, idempotency_key)
+
+
+def _post_resend_json(
+    url: str,
+    payload: dict[str, Any],
+    idempotency_key: str | None = None,
+) -> dict[str, Any]:
+    api_key = _required_env("RESEND_API_KEY")
+    body = json.dumps(payload).encode("utf-8")
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "User-Agent": "bidmatrix-monitor-weekly-email/0.1",
+    }
+    if idempotency_key:
+        headers["Idempotency-Key"] = idempotency_key
+    request = Request(url, data=body, method="POST", headers=headers)
     try:
         with urlopen(request, timeout=30) as response:
             raw = response.read().decode("utf-8")
