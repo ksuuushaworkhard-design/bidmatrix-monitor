@@ -1415,11 +1415,11 @@ def test_weekly_email_source_refresh_does_not_expand_when_digest_has_enough_item
     assert cli_module._expand_weekly_email_source_report_if_needed(report, FakeClient(), SimpleNamespace()) is report
 
 
-def test_weekly_email_github_workflow_runs_monday_noon_moscow_without_telegram() -> None:
+def test_weekly_email_github_workflow_runs_monday_morning_moscow_without_telegram() -> None:
     workflow = Path(".github/workflows/weekly-email.yml").read_text(encoding="utf-8")
 
     assert "name: BidMatrix Weekly Email" in workflow
-    assert "cron: '47 8 * * 1'" in workflow
+    assert "cron: '47 4 * * 1'" in workflow
     assert "bidmatrix-monitor --weekly-email-test-run --weekly-email-refresh-source-report" in workflow
     assert "RESEND_API_KEY" in workflow
     assert "WEEKLY_EMAIL_FROM" in workflow
