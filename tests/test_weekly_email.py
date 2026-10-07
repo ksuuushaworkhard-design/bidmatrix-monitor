@@ -1010,6 +1010,76 @@ def test_weekly_email_broadcast_dry_run_never_sends(monkeypatch, tmp_path: Path)
     assert result["broadcast_payload"]["send"] is True
 
 
+def test_external_weekly_email_requires_approval_and_separate_segment(monkeypatch, tmp_path: Path) -> None:
+    html_path = tmp_path / "preview.html"
+    text_path = tmp_path / "preview.txt"
+    html_path.write_text("<html><body>Hello</body></html>", encoding="utf-8")
+    text_path.write_text("Hello", encoding="utf-8")
+    manifest_path = tmp_path / "manifest.json"
+    manifest = {
+        "campaign_type": "external_weekly_email",
+        "run_date": "2026-10-12",
+        "email_subject": "Weekly",
+        "preview_files": {"html": str(html_path), "text": str(text_path)},
+        "items_count": 5,
+        "minimum_external_items": 5,
+        "external_send_ready": True,
+        "approval_required": True,
+        "approved": False,
+    }
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    monkeypatch.setenv("WEEKLY_EMAIL_FROM", "BidMatrix <weekly@updates.bid-matrix.com>")
+    monkeypatch.setenv("WEEKLY_EMAIL_SEGMENT_ID", "internal_team")
+
+    skipped = weekly_email.send_weekly_email_test(manifest_path)
+
+    assert skipped["mode"] == "skipped"
+    assert skipped["skip_reason"] == "approval_required"
+
+    manifest["approved"] = True
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(weekly_email.WeeklyEmailError, match="WEEKLY_EMAIL_EXTERNAL_SEGMENT_ID"):
+        weekly_email.send_weekly_email_test(manifest_path)
+
+
+def test_external_weekly_email_uses_unsubscribe_and_external_segment(monkeypatch, tmp_path: Path) -> None:
+    html_path = tmp_path / "preview.html"
+    text_path = tmp_path / "preview.txt"
+    html_path.write_text("<html><body>Hello</body></html>", encoding="utf-8")
+    text_path.write_text("Hello", encoding="utf-8")
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "campaign_type": "external_weekly_email",
+                "run_date": "2026-10-12",
+                "email_subject": "Weekly",
+                "preview_files": {"html": str(html_path), "text": str(text_path)},
+                "items_count": 5,
+                "minimum_external_items": 5,
+                "external_send_ready": True,
+                "approval_required": True,
+                "approved": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("WEEKLY_EMAIL_FROM", "BidMatrix <weekly@updates.bid-matrix.com>")
+    monkeypatch.setenv("WEEKLY_EMAIL_SEGMENT_ID", "internal_team")
+    monkeypatch.setenv("WEEKLY_EMAIL_EXTERNAL_SEGMENT_ID", "external_customers")
+    monkeypatch.setattr(
+        weekly_email,
+        "_send_resend_broadcast",
+        lambda payload, idempotency_key=None: pytest.fail("dry run must not send"),
+    )
+
+    result = weekly_email.send_weekly_email_test(manifest_path, dry_run=True)
+
+    assert result["segment_id"] == "external_customers"
+    assert "{{{RESEND_UNSUBSCRIBE_URL}}}" in result["broadcast_payload"]["html"]
+    assert "{{{RESEND_UNSUBSCRIBE_URL}}}" in result["broadcast_payload"]["text"]
+
+
 def test_weekly_email_batches_large_recipient_list_without_duplicates(monkeypatch, tmp_path: Path) -> None:
     manifest_path = _preview_files(
         tmp_path,

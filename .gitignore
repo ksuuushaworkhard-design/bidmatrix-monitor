@@ -4,6 +4,8 @@
 .venv/
 venv/
 reports/
+data/private/
+data/email-audience-*.csv
 *.log
 daily-monitor.log
 daily-monitor-error.log
