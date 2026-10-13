@@ -333,6 +333,8 @@ def _weekly_rejection_reason(item: dict[str, Any], run_date: date) -> str | None
         return "unknown_date"
     if re.search(r"\bto enable\.|\be\.g\.|\(e\.g\.|\(\s*$", text, flags=re.IGNORECASE):
         return "broken_fragment"
+    if "dev.blog.airbridge.io" in text or "test tracking/deep-link" in text:
+        return "developer_test_content"
     if _weekly_is_generic_low_quality(item):
         return "generic_low_quality"
     confidence = str(item.get("confidence") or "medium").lower()
@@ -362,7 +364,18 @@ def _weekly_is_generic_low_quality(item: dict[str, Any]) -> bool:
             str(item.get("what_happened") or ""),
         ]
     ).lower()
-    return any(phrase in text for phrase in ("product news", "latest features", "front page", "roundup of product updates"))
+    return any(
+        phrase in text
+        for phrase in (
+            "product news",
+            "latest features",
+            "front page",
+            "roundup of product updates",
+            "test content",
+            "tracking-link examples",
+            "developer-blog activity",
+        )
+    )
 
 
 def _weekly_bucket(item: dict[str, Any]) -> str:
@@ -585,15 +598,36 @@ def _item_date(item: dict[str, Any]) -> date | None:
 
 def _primary_company(item: dict[str, Any]) -> str:
     company_or_topic = str(item.get("company_or_topic", "")).strip()
-    if company_or_topic:
-        return company_or_topic
     companies = [str(value).strip() for value in item.get("mentioned_companies", []) if str(value).strip()]
+    if company_or_topic and not _looks_like_topic_company(company_or_topic):
+        return company_or_topic
     if companies:
         return companies[0]
+    if company_or_topic:
+        return company_or_topic
     title = str(item.get("title", "")).strip()
     if title:
         return title.split(" ", 1)[0]
     return "Unknown"
+
+
+def _looks_like_topic_company(value: str) -> bool:
+    text = " ".join(str(value or "").lower().split())
+    topic_terms = (
+        " activity",
+        " analysis",
+        " attribution",
+        " automation",
+        " developer-blog",
+        " incrementality",
+        " marketing mix",
+        " measurement",
+        " media buying",
+        " profitability",
+        " programmatic",
+        " user acquisition",
+    )
+    return len(text.split()) > 4 or any(term in text for term in topic_terms)
 
 
 def _event_line(item: dict[str, Any], company: str) -> str:
@@ -767,7 +801,12 @@ def _plain_sentence(text: str, max_chars: int) -> str:
                 break
         if len(cleaned) > max_chars:
             cleaned = cleaned[:max_chars].rsplit(" ", 1)[0]
-    cleaned = re.sub(r"(real-time|for|with|and|into|across|against)$", "", cleaned, flags=re.IGNORECASE).strip(' ,;:-')
+    cleaned = re.sub(
+        r"\b(real-time|for|with|and|but|into|across|against)$",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    ).strip(" ,;:-")
 
     if cleaned and cleaned[-1] not in ".!?":
         cleaned += "."

@@ -9,6 +9,7 @@ import re
 import pytest
 
 from bidmatrix_monitor import cli as cli_module
+from bidmatrix_monitor import weekly as weekly_module
 from bidmatrix_monitor import weekly_email
 from bidmatrix_monitor.config import load_config
 
@@ -662,6 +663,43 @@ def test_weekly_email_recovers_company_from_generic_topic_subject() -> None:
     }
 
     assert weekly_email._company_from_pipeline_item(item) == "OpenAI"
+
+
+def test_weekly_digest_recovers_company_from_topic_subject() -> None:
+    item = {
+        "company_or_topic": "SuperScale mobile UA channel profitability analysis",
+        "mentioned_companies": ["SuperScale", "Pocket Gamer Connects"],
+    }
+
+    assert weekly_module._primary_company(item) == "SuperScale"
+
+
+def test_weekly_digest_rejects_test_content_as_low_quality() -> None:
+    item = {
+        "title": "Airbridge developer blog test",
+        "what_happened": "The developer blog contains test content and tracking-link examples.",
+    }
+
+    assert weekly_module._weekly_is_generic_low_quality(item) is True
+
+
+def test_weekly_digest_rejects_airbridge_developer_test_pages() -> None:
+    item = {
+        "title": "Airbridge tracking example",
+        "url": "http://dev.blog.airbridge.io/mobplus/",
+        "published_date": "2026-10-08",
+        "what_happened": "Airbridge published test tracking/deep-link URLs.",
+    }
+
+    assert weekly_module._weekly_rejection_reason(item, date(2026, 10, 12)) == "developer_test_content"
+
+
+def test_weekly_sentence_does_not_end_with_dangling_conjunction() -> None:
+    text = "SuperScale found that the largest networks absorb spend but return only part of the profit, but"
+
+    assert weekly_module._plain_sentence(text, 100) == (
+        "SuperScale found that the largest networks absorb spend but return only part of the profit."
+    )
 
 
 @pytest.mark.parametrize(
@@ -1420,6 +1458,10 @@ def test_weekly_email_github_workflow_runs_monday_morning_moscow_without_telegra
 
     assert "name: BidMatrix Weekly Email" in workflow
     assert "cron: '47 4 * * 1'" in workflow
+    assert "Restore recent daily report cache" in workflow
+    assert "gh run list --workflow market-brief.yml" in workflow
+    assert "gh run download \"$run_id\" --name \"reports-$run_id\"" in workflow
+    assert "WEEKLY_EMAIL_REPORT_CACHE_RESTORED" in workflow
     assert "bidmatrix-monitor --weekly-email-test-run --weekly-email-refresh-source-report" in workflow
     assert "RESEND_API_KEY" in workflow
     assert "WEEKLY_EMAIL_FROM" in workflow
