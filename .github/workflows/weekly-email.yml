@@ -1,5 +1,9 @@
 name: BidMatrix Weekly Email
 
+permissions:
+  contents: read
+  actions: read
+
 on:
   pull_request:
     branches:
@@ -32,6 +36,26 @@ jobs:
       - name: Run pull request checks
         if: ${{ github.event_name == 'pull_request' }}
         run: pytest
+
+      - name: Restore recent daily report cache
+        if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p reports /tmp/bidmatrix-daily-reports
+          restored=0
+          while read -r run_id; do
+            [ -n "$run_id" ] || continue
+            run_dir="/tmp/bidmatrix-daily-reports/$run_id"
+            mkdir -p "$run_dir"
+            if gh run download "$run_id" --name "reports-$run_id" --dir "$run_dir"; then
+              while IFS= read -r report; do
+                cp "$report" reports/
+                restored=$((restored + 1))
+              done < <(find "$run_dir" -type f -name 'bidmatrix-monitor-*-curated.json')
+            fi
+          done < <(gh run list --workflow market-brief.yml --branch main --status success --limit 8 --json databaseId --jq '.[].databaseId')
+          echo "WEEKLY_EMAIL_REPORT_CACHE_RESTORED files=$restored"
 
       - name: Send weekly email
         if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
