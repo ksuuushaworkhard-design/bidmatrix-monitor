@@ -6,8 +6,8 @@ on:
       - main
   workflow_dispatch:
   schedule:
-    # Start at 11:47 Moscow time on Mondays to avoid GitHub's top-of-hour queue.
-    - cron: '47 8 * * 1'
+    # Start at 07:47 Moscow time on Mondays to leave room for GitHub scheduler delays.
+    - cron: '47 4 * * 1'
 
 jobs:
   weekly-email:
