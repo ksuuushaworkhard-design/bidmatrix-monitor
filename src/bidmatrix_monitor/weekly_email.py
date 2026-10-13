@@ -530,7 +530,9 @@ def send_weekly_email_test(
 
     subject = str(manifest.get("email_subject") or "BidMatrix Weekly Growth Brief")
     recipient_value = _weekly_email_recipient_value()
-    segment_id = os.environ.get("WEEKLY_EMAIL_SEGMENT_ID", "").strip()
+    external_campaign = manifest.get("campaign_type") == "external_weekly_email"
+    segment_env = "WEEKLY_EMAIL_EXTERNAL_SEGMENT_ID" if external_campaign else "WEEKLY_EMAIL_SEGMENT_ID"
+    segment_id = os.environ.get(segment_env, "").strip()
     skip_reason = _weekly_email_send_skip_reason(manifest)
     if skip_reason and not dry_run:
         return {
@@ -550,6 +552,9 @@ def send_weekly_email_test(
             "minimum_external_items": manifest.get("minimum_external_items"),
             "external_send_ready": manifest.get("external_send_ready"),
         }
+
+    if external_campaign and not segment_id:
+        raise WeeklyEmailError("Missing required environment variable: WEEKLY_EMAIL_EXTERNAL_SEGMENT_ID")
 
     sender = _required_env("WEEKLY_EMAIL_FROM")
     html_body = html_path.read_text(encoding="utf-8")
@@ -636,6 +641,12 @@ def send_weekly_email_test(
 
 
 def _weekly_email_send_skip_reason(manifest: dict[str, Any]) -> str | None:
+    if (
+        manifest.get("campaign_type") == "external_weekly_email"
+        and bool(manifest.get("approval_required"))
+        and not bool(manifest.get("approved"))
+    ):
+        return "approval_required"
     items_count = _int_value(manifest.get("items_count"))
     minimum_items = _int_value(manifest.get("minimum_external_items")) or WEEKLY_EMAIL_TARGET_ITEMS
     if items_count is not None and items_count < minimum_items:

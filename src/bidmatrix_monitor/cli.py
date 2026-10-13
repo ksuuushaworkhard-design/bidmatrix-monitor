@@ -9,6 +9,12 @@ from .audit import write_daily_audit_report
 from .competitor_radar import build_competitor_radar_preview
 from .config import load_config
 from .delivery import DeliveryError, maybe_deliver_marketing_insights_report, maybe_deliver_report
+from .email_audience import (
+    EmailAudienceError,
+    approve_external_campaign_manifest,
+    prepare_email_audience,
+    prepare_external_campaign_manifest,
+)
 from .intelligence import build_report
 from .linkedin_watch import build_linkedin_watch_preview
 from .market_brief_v2 import build_market_brief_v2_preview
@@ -63,6 +69,37 @@ def main() -> None:
         default=None,
         help="Optional .env file for weekly email test-send credentials.",
     )
+    parser.add_argument(
+        "--weekly-email-audience-import",
+        help="Validate and normalize a consent-based external audience CSV without uploading contacts.",
+    )
+    parser.add_argument(
+        "--weekly-email-audience-output-dir",
+        default="data/private/weekly-email-audience",
+        help="Private output directory for validated audience files.",
+    )
+    parser.add_argument(
+        "--weekly-email-external-prepare",
+        help="Create a blocked-by-default external campaign manifest from a weekly preview manifest.",
+    )
+    parser.add_argument(
+        "--weekly-email-audience-summary",
+        help="Audience summary JSON required by --weekly-email-external-prepare.",
+    )
+    parser.add_argument(
+        "--weekly-email-external-manifest",
+        default="data/private/weekly-email-audience/external-campaign.json",
+        help="Output path for an external campaign manifest, or manifest to approve.",
+    )
+    parser.add_argument(
+        "--weekly-email-external-approve",
+        action="store_true",
+        help="Record approval in an external campaign manifest; does not send email.",
+    )
+    parser.add_argument(
+        "--weekly-email-approved-by",
+        help="Approver name or email for --weekly-email-external-approve.",
+    )
     parser.add_argument("--diagnostics", action="store_true", help="Print curation diagnostics after a daily run.")
     parser.add_argument("--debug-exa", action="store_true", help="Print detailed Exa query timing logs.")
     parser.add_argument(
@@ -113,6 +150,56 @@ def main() -> None:
         help="Maximum Exa queries for the Market Brief v2 preview, capped internally at 20.",
     )
     args = parser.parse_args()
+
+    if args.weekly_email_audience_import:
+        try:
+            accepted, rejected, summary_path, summary = prepare_email_audience(
+                args.weekly_email_audience_import,
+                args.weekly_email_audience_output_dir,
+            )
+        except EmailAudienceError as exc:
+            print(f"WEEKLY_EMAIL_AUDIENCE_IMPORT_FAILED error={exc}")
+            raise SystemExit(2) from exc
+        print(
+            "WEEKLY_EMAIL_AUDIENCE_IMPORT_FINISHED "
+            f"accepted={summary['accepted_count']} rejected={summary['rejected_count']} "
+            f"accepted_file={accepted} rejected_file={rejected} summary={summary_path}"
+        )
+        return
+
+    if args.weekly_email_external_prepare:
+        if not args.weekly_email_audience_summary:
+            parser.error("--weekly-email-audience-summary is required with --weekly-email-external-prepare")
+        try:
+            campaign = prepare_external_campaign_manifest(
+                args.weekly_email_external_prepare,
+                args.weekly_email_audience_summary,
+                args.weekly_email_external_manifest,
+            )
+        except EmailAudienceError as exc:
+            print(f"WEEKLY_EMAIL_EXTERNAL_PREPARE_FAILED error={exc}")
+            raise SystemExit(2) from exc
+        print(
+            "WEEKLY_EMAIL_EXTERNAL_PREPARED "
+            f"manifest={args.weekly_email_external_manifest} approved={campaign['approved']} "
+            f"audience={campaign['audience']['accepted_count']}"
+        )
+        return
+
+    if args.weekly_email_external_approve:
+        try:
+            campaign = approve_external_campaign_manifest(
+                args.weekly_email_external_manifest,
+                approved_by=args.weekly_email_approved_by or "",
+            )
+        except EmailAudienceError as exc:
+            print(f"WEEKLY_EMAIL_EXTERNAL_APPROVAL_FAILED error={exc}")
+            raise SystemExit(2) from exc
+        print(
+            "WEEKLY_EMAIL_EXTERNAL_APPROVED "
+            f"manifest={args.weekly_email_external_manifest} approved_by={campaign['approved_by']}"
+        )
+        return
 
     if args.weekly_email_send_test:
         try:
