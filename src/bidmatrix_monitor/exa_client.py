@@ -293,15 +293,24 @@ class ExaMonitorClient:
         query = self._build_query(topic, layer)
         query_label = topic.label if layer != "market_watch_recent" else topic.query
         self._pace_requests()
-        for attempt in range(2):
+        if self._budget_exceeded():
+            return []
+
+        max_attempts = 1 if layer == "strategic_background" else 2
+        for attempt in range(max_attempts):
+            remaining_budget = self._remaining_budget_seconds()
+            if remaining_budget <= 0:
+                self._budget_exceeded()
+                return []
+            request_timeout = min(timeout_seconds, max(1, int(remaining_budget)))
             start = time.monotonic()
             self._stats.total_queries += 1
             if attempt == 0:
                 self._query_counts[layer] = self._query_counts.get(layer, 0) + 1
-            self._exa.set_request_timeout(timeout_seconds)
+            self._exa.set_request_timeout(request_timeout)
             print(
                 f"EXA_QUERY_START layer={layer} topic={query_label} "
-                f"timeout={timeout_seconds} attempt={attempt + 1}"
+                f"timeout={request_timeout} attempt={attempt + 1}"
             )
             try:
                 response = self._exa.search(
@@ -338,7 +347,11 @@ class ExaMonitorClient:
                     f"EXA_QUERY_ERROR layer={layer} error_type={type(exc).__name__} "
                     f"duration={duration} blocked={blocked}"
                 )
-                if attempt == 0 and _is_retryable_exa_error(exc) and not getattr(self, "_circuit_open", False):
+                if (
+                    attempt + 1 < max_attempts
+                    and _is_retryable_exa_error(exc)
+                    and not getattr(self, "_circuit_open", False)
+                ):
                     self._stats.retries_count += 1
                     delay = 2
                     print(f"EXA_QUERY_RETRY layer={layer} delay_seconds={delay}")
@@ -401,6 +414,10 @@ class ExaMonitorClient:
             self._stats.budget_exceeded = True
             return True
         return False
+
+    def _remaining_budget_seconds(self) -> float:
+        elapsed = time.monotonic() - self._collection_started_at
+        return max(0.0, self._config.search.daily_total_budget_seconds - elapsed)
 
     def _build_query(self, topic: Topic, layer: str) -> str:
         tracking = self._config.tracking

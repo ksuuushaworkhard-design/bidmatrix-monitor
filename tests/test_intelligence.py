@@ -1,6 +1,9 @@
 from datetime import date, timedelta
+from dataclasses import replace
 import re
 from typing import Optional, List
+
+import pytest
 
 from bidmatrix_monitor.intelligence import build_report, dedupe_items
 from bidmatrix_monitor.models import MonitorConfig, NewsItem, OutputSettings, SearchSettings, SourceConfig, Topic
@@ -1363,6 +1366,64 @@ def test_exa_client_retries_timeout_once(monkeypatch) -> None:
     stats = client.collection_stats()
     assert stats["exa_retries_count"] == 1
     assert stats["exa_timeouts_count"] == 1
+
+
+def test_exa_client_does_not_retry_strategic_background_timeout(monkeypatch) -> None:
+    client = _resilience_client()
+
+    class TimingOutExa:
+        calls = 0
+
+        def set_request_timeout(self, seconds):
+            pass
+
+        def search(self, *args, **kwargs):
+            self.calls += 1
+            raise TimeoutError("strategic background timed out")
+
+    timing_out_exa = TimingOutExa()
+    client._exa = timing_out_exa
+    monkeypatch.setattr(exa_client_module.time, "sleep", lambda seconds: None)
+
+    with pytest.raises(TimeoutError):
+        client.search_topic_layer(Topic(id="a", label="Adtech", query="adtech"), "strategic_background")
+
+    assert timing_out_exa.calls == 1
+    stats = client.collection_stats()
+    assert stats["exa_retries_count"] == 0
+    assert stats["exa_timeouts_count"] == 1
+
+
+def test_exa_client_clamps_request_timeout_to_remaining_budget(monkeypatch) -> None:
+    client = _resilience_client()
+    client._config = replace(
+        client._config,
+        search=replace(client._config.search, request_timeout_seconds=30, daily_total_budget_seconds=10),
+    )
+    client._collection_started_at = 100.0
+    timeouts = []
+
+    class Output:
+        content = {"developments": []}
+        grounding = []
+
+    class Response:
+        output = Output()
+
+    class RecordingExa:
+        def set_request_timeout(self, seconds):
+            timeouts.append(seconds)
+
+        def search(self, *args, **kwargs):
+            return Response()
+
+    client._exa = RecordingExa()
+    monkeypatch.setattr(exa_client_module.time, "monotonic", lambda: 106.2)
+    monkeypatch.setattr(exa_client_module.time, "sleep", lambda seconds: None)
+
+    client.search_topic_layer(Topic(id="a", label="Adtech", query="adtech"), "daily_fresh_signals")
+
+    assert timeouts == [3]
 
 
 def test_exa_client_fails_open_when_market_watch_layer_times_out() -> None:
