@@ -4,7 +4,7 @@ import json
 import os
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Mapping
 from urllib.parse import urlparse
 
 import requests
@@ -110,11 +110,24 @@ class TimeoutExa(Exa):
         method: str = "POST",
         params: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
+        timeout: float | None = None,
+        extra_headers: Mapping[str, str | None] | None = None,
+        extra_query: Mapping[str, Any] | None = None,
+        extra_body: Mapping[str, Any] | None = None,
     ) -> dict[str, Any] | requests.Response:
+        if extra_body:
+            if isinstance(data, str):
+                raise TypeError("extra_body cannot be combined with a serialized request body")
+            data = {**(data or {}), **extra_body}
+
         if isinstance(data, str):
             json_data = data
         else:
             json_data = json.dumps(data, cls=ExaJSONEncoder) if data else None
+
+        request_params = {**(params or {})}
+        if extra_query:
+            request_params.update({key: value for key, value in extra_query.items() if value is not None})
 
         needs_streaming = (data and isinstance(data, dict) and data.get("stream")) or (
             params and params.get("stream") == "true"
@@ -123,23 +136,27 @@ class TimeoutExa(Exa):
         request_headers = {**self.headers}
         if headers:
             request_headers.update(headers)
+        if extra_headers:
+            request_headers.update({key: value for key, value in extra_headers.items() if value is not None})
 
-        timeout = self._request_timeout_seconds
+        request_timeout = self._request_timeout_seconds
+        if timeout is not None:
+            request_timeout = min(request_timeout, max(1.0, float(timeout)))
         if method.upper() == "GET":
             if needs_streaming:
                 res = requests.get(
                     self.base_url + endpoint,
                     headers=request_headers,
-                    params=params,
+                    params=request_params,
                     stream=True,
-                    timeout=timeout,
+                    timeout=request_timeout,
                 )
                 return res
             res = requests.get(
                 self.base_url + endpoint,
                 headers=request_headers,
-                params=params,
-                timeout=timeout,
+                params=request_params,
+                timeout=request_timeout,
             )
         elif method.upper() == "POST":
             if needs_streaming:
@@ -147,25 +164,33 @@ class TimeoutExa(Exa):
                     self.base_url + endpoint,
                     data=json_data,
                     headers=request_headers,
+                    params=request_params,
                     stream=True,
-                    timeout=timeout,
+                    timeout=request_timeout,
                 )
                 return res
             res = requests.post(
                 self.base_url + endpoint,
                 data=json_data,
                 headers=request_headers,
-                timeout=timeout,
+                params=request_params,
+                timeout=request_timeout,
             )
         elif method.upper() == "PATCH":
             res = requests.patch(
                 self.base_url + endpoint,
                 data=json_data,
                 headers=request_headers,
-                timeout=timeout,
+                params=request_params,
+                timeout=request_timeout,
             )
         elif method.upper() == "DELETE":
-            res = requests.delete(self.base_url + endpoint, headers=request_headers, timeout=timeout)
+            res = requests.delete(
+                self.base_url + endpoint,
+                headers=request_headers,
+                params=request_params,
+                timeout=request_timeout,
+            )
         else:
             raise ValueError(f"Unsupported HTTP method: {method}")
 

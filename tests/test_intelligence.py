@@ -1426,6 +1426,46 @@ def test_exa_client_clamps_request_timeout_to_remaining_budget(monkeypatch) -> N
     assert timeouts == [3]
 
 
+def test_timeout_exa_accepts_current_sdk_request_options(monkeypatch) -> None:
+    client = object.__new__(exa_client_module.TimeoutExa)
+    client._request_timeout_seconds = 7
+    client.base_url = "https://api.exa.ai"
+    client.headers = {"x-api-key": "secret"}
+    captured = {}
+
+    class Response:
+        status_code = 200
+
+        def json(self):
+            return {"ok": True}
+
+    def fake_post(url, **kwargs):
+        captured["url"] = url
+        captured.update(kwargs)
+        return Response()
+
+    monkeypatch.setattr(exa_client_module.requests, "post", fake_post)
+
+    result = client.request(
+        "/search",
+        data={"query": "adtech"},
+        timeout=30,
+        extra_headers={"x-test": "yes"},
+        extra_query={"preview": "true"},
+        extra_body={"num_results": 5},
+    )
+
+    assert result == {"ok": True}
+    assert captured["url"] == "https://api.exa.ai/search"
+    assert captured["timeout"] == 7
+    assert captured["params"] == {"preview": "true"}
+    assert captured["headers"]["x-test"] == "yes"
+    assert exa_client_module.json.loads(captured["data"]) == {
+        "query": "adtech",
+        "num_results": 5,
+    }
+
+
 def test_exa_client_fails_open_when_market_watch_layer_times_out() -> None:
     config = MonitorConfig(
         brand_name="BidMatrix",
