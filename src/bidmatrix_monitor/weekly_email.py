@@ -24,7 +24,7 @@ class WeeklyEmailError(RuntimeError):
 
 WEEKLY_EMAIL_TARGET_ITEMS = 5
 WEEKLY_EMAIL_MINIMUM_EXTERNAL_ITEMS = 5
-WEEKLY_EMAIL_FALLBACK_DAYS = 30
+WEEKLY_EMAIL_FALLBACK_DAYS = 7
 WEEKLY_EMAIL_MAX_BCC_RECIPIENTS = 49
 WEEKLY_EMAIL_LAUNCH_DATE = date(2026, 9, 28)
 WEEKLY_EMAIL_LAUNCH_INTRO = (
@@ -336,12 +336,8 @@ def _is_quality_fallback_item(item: dict[str, Any]) -> bool:
 def _pipeline_quality_rank(item: dict[str, Any], output_date: date) -> tuple[int, int, int]:
     published = _pipeline_item_date(item)
     age_days = (output_date - published).days if published else WEEKLY_EMAIL_FALLBACK_DAYS + 1
-    if age_days <= 7:
+    if 0 <= age_days <= WEEKLY_EMAIL_FALLBACK_DAYS:
         freshness_rank = 3
-    elif age_days <= 14:
-        freshness_rank = 2
-    elif age_days <= WEEKLY_EMAIL_FALLBACK_DAYS:
-        freshness_rank = 1
     else:
         freshness_rank = 0
     confidence_rank = {"high": 2, "medium": 1}.get(str(item.get("confidence") or "medium").lower(), 0)
