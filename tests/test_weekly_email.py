@@ -608,16 +608,24 @@ def test_weekly_email_manifest_requires_five_distinct_companies(monkeypatch, tmp
     assert manifest["limited_signal_volume"] is False
 
 
-def test_weekly_email_uses_fresh_items_then_quality_14_and_30_day_fallbacks(tmp_path: Path) -> None:
+def test_weekly_email_fallback_uses_only_items_published_in_last_seven_days(tmp_path: Path) -> None:
     companies_and_dates = [
         ("AppsFlyer", "2026-10-05"),
-        ("Moloco", "2026-10-01"),
-        ("Liftoff", "2026-09-26"),
-        ("Adjust", "2026-09-21"),
-        ("Kochava", "2026-09-10"),
+        ("Moloco", "2026-10-04"),
+        ("Liftoff", "2026-10-03"),
+        ("Adjust", "2026-10-02"),
+        ("Kochava", "2026-09-28"),
+        ("Magnite", "2026-09-23"),
     ]
     items = []
-    domains = {"AppsFlyer": "appsflyer.com", "Moloco": "moloco.com", "Liftoff": "liftoff.io", "Adjust": "adjust.com", "Kochava": "kochava.com"}
+    domains = {
+        "AppsFlyer": "appsflyer.com",
+        "Moloco": "moloco.com",
+        "Liftoff": "liftoff.io",
+        "Adjust": "adjust.com",
+        "Kochava": "kochava.com",
+        "Magnite": "magnite.com",
+    }
     for company, published_date in companies_and_dates:
         domain = domains[company]
         items.append(
@@ -641,7 +649,7 @@ def test_weekly_email_uses_fresh_items_then_quality_14_and_30_day_fallbacks(tmp_
     )
 
     result = weekly_email._prefer_pipeline_selected_digest_items(
-        _digest(), tmp_path, 30, date(2026, 10, 5)
+        _digest(), tmp_path, 7, date(2026, 10, 5)
     )
 
     assert [item["company"] for item in result["what_actually_happened"]] == [
@@ -653,6 +661,18 @@ def test_weekly_email_uses_fresh_items_then_quality_14_and_30_day_fallbacks(tmp_
     ]
     assert result["item_count"] == 5
     assert result["limited_signal_volume"] is False
+    assert "Magnite" not in [item["company"] for item in result["what_actually_happened"]]
+
+
+def test_weekly_email_rejects_twelve_day_old_fallback_item() -> None:
+    item = {
+        "company_or_topic": "Magnite",
+        "published_date": "2026-10-14",
+        "score": 10,
+        "confidence": "high",
+    }
+
+    assert weekly_email._pipeline_quality_rank(item, date(2026, 10, 26))[0] == 0
 
 
 def test_weekly_email_recovers_company_from_generic_topic_subject() -> None:
