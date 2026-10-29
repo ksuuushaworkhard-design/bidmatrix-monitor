@@ -5,6 +5,7 @@ from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 import re
+from urllib.error import URLError
 
 import pytest
 
@@ -87,6 +88,32 @@ def test_weekly_email_html_contains_links_and_external_sections() -> None:
     assert "high-signal" not in html
     assert "TEST -" not in html
     assert "Internal beta preview" not in html
+    assert "AppLovin expanded its AI-driven performance advertising platform" in html
+    assert "BidMatrix ·" in html
+    assert "bid-matrix.com" in html
+    assert "60 Paya Lebar Road" in html
+    assert "{{{RESEND_UNSUBSCRIBE_URL}}}" in html
+    assert "utm_source=bidmatrix_weekly_email" in html
+    assert "utm_medium=email" in html
+    assert "utm_campaign=weekly_growth_brief_2026_08_14" in html
+    assert "utm_content=applovin" in html
+
+
+def test_weekly_email_public_footer_includes_configured_company_address(monkeypatch) -> None:
+    monkeypatch.setenv("WEEKLY_EMAIL_COMPANY_ADDRESS", "BidMatrix Ltd, 1 Example Street, London")
+
+    rendered = weekly_email.render_weekly_email_html(_digest())
+
+    assert "BidMatrix Ltd, 1 Example Street, London" in rendered
+    assert "You are receiving this weekly industry brief" in rendered
+
+
+def test_weekly_email_text_contains_public_footer_and_tracked_source() -> None:
+    rendered = weekly_email.render_weekly_email_text(_digest())
+
+    assert "BidMatrix · bid-matrix.com" in rendered
+    assert "Unsubscribe: {{{RESEND_UNSUBSCRIBE_URL}}}" in rendered
+    assert "utm_source=bidmatrix_weekly_email" in rendered
 
 
 def test_weekly_email_launch_intro_appears_only_in_first_official_email() -> None:
@@ -109,6 +136,27 @@ def test_weekly_email_launch_intro_appears_only_in_first_official_email() -> Non
     assert "automated the process of finding and selecting important news" in launch_html
     assert "every Monday" in launch_html
     assert "Hi everyone! 👋 Ksenia here" not in later_html
+
+
+def test_weekly_email_public_launch_intro_appears_only_when_enabled() -> None:
+    public_launch_digest = {
+        **_digest(),
+        "include_public_launch_intro": True,
+    }
+    regular_digest = {
+        **_digest(),
+        "include_public_launch_intro": False,
+    }
+
+    launch_text = weekly_email.render_weekly_email_text(public_launch_digest)
+    launch_html = weekly_email.render_weekly_email_html(public_launch_digest)
+    regular_html = weekly_email.render_weekly_email_html(regular_digest)
+
+    assert "Hello from the BidMatrix team! 👋" in launch_text
+    assert "Welcome to the BidMatrix Weekly Growth Brief" in launch_html
+    assert "Every week, we’ll select the most relevant news" in launch_html
+    assert "Hello from the BidMatrix team! 👋" not in regular_html
+    assert "{{{RESEND_UNSUBSCRIBE_URL}}}" in launch_html
 
 
 def test_weekly_email_html_uses_only_brand_hex_colors() -> None:
@@ -608,16 +656,24 @@ def test_weekly_email_manifest_requires_five_distinct_companies(monkeypatch, tmp
     assert manifest["limited_signal_volume"] is False
 
 
-def test_weekly_email_uses_fresh_items_then_quality_14_and_30_day_fallbacks(tmp_path: Path) -> None:
+def test_weekly_email_fallback_uses_only_items_published_in_last_seven_days(tmp_path: Path) -> None:
     companies_and_dates = [
         ("AppsFlyer", "2026-10-05"),
-        ("Moloco", "2026-10-01"),
-        ("Liftoff", "2026-09-26"),
-        ("Adjust", "2026-09-21"),
-        ("Kochava", "2026-09-10"),
+        ("Moloco", "2026-10-04"),
+        ("Liftoff", "2026-10-03"),
+        ("Adjust", "2026-10-02"),
+        ("Kochava", "2026-09-28"),
+        ("Magnite", "2026-09-23"),
     ]
     items = []
-    domains = {"AppsFlyer": "appsflyer.com", "Moloco": "moloco.com", "Liftoff": "liftoff.io", "Adjust": "adjust.com", "Kochava": "kochava.com"}
+    domains = {
+        "AppsFlyer": "appsflyer.com",
+        "Moloco": "moloco.com",
+        "Liftoff": "liftoff.io",
+        "Adjust": "adjust.com",
+        "Kochava": "kochava.com",
+        "Magnite": "magnite.com",
+    }
     for company, published_date in companies_and_dates:
         domain = domains[company]
         items.append(
@@ -641,7 +697,7 @@ def test_weekly_email_uses_fresh_items_then_quality_14_and_30_day_fallbacks(tmp_
     )
 
     result = weekly_email._prefer_pipeline_selected_digest_items(
-        _digest(), tmp_path, 30, date(2026, 10, 5)
+        _digest(), tmp_path, 7, date(2026, 10, 5)
     )
 
     assert [item["company"] for item in result["what_actually_happened"]] == [
@@ -653,6 +709,18 @@ def test_weekly_email_uses_fresh_items_then_quality_14_and_30_day_fallbacks(tmp_
     ]
     assert result["item_count"] == 5
     assert result["limited_signal_volume"] is False
+    assert "Magnite" not in [item["company"] for item in result["what_actually_happened"]]
+
+
+def test_weekly_email_rejects_twelve_day_old_fallback_item() -> None:
+    item = {
+        "company_or_topic": "Magnite",
+        "published_date": "2026-10-14",
+        "score": 10,
+        "confidence": "high",
+    }
+
+    assert weekly_email._pipeline_quality_rank(item, date(2026, 10, 26))[0] == 0
 
 
 def test_weekly_email_recovers_company_from_generic_topic_subject() -> None:
@@ -992,6 +1060,7 @@ def test_weekly_email_uses_resend_broadcast_segment_with_unsubscribe(monkeypatch
     monkeypatch.setenv("RESEND_API_KEY", "re_test")
     monkeypatch.setenv("WEEKLY_EMAIL_FROM", "BidMatrix <weekly@updates.bid-matrix.com>")
     monkeypatch.setenv("WEEKLY_EMAIL_SEGMENT_ID", "segment_team")
+    monkeypatch.setenv("WEEKLY_EMAIL_REPLY_TO", "Ksenia <ksenia@bid-matrix.com>")
     monkeypatch.delenv("WEEKLY_EMAIL_TO", raising=False)
     captured: dict[str, object] = {}
 
@@ -1018,9 +1087,119 @@ def test_weekly_email_uses_resend_broadcast_segment_with_unsubscribe(monkeypatch
     payload = captured["payload"]
     assert payload["segment_id"] == "segment_team"
     assert payload["send"] is True
+    assert payload["reply_to"] == "Ksenia <ksenia@bid-matrix.com>"
     assert "bcc" not in payload
     assert '{{{RESEND_UNSUBSCRIBE_URL}}}' in payload["html"]
     assert '{{{RESEND_UNSUBSCRIBE_URL}}}' in payload["text"]
+
+
+def test_weekly_email_public_approval_gate_blocks_unapproved_send(monkeypatch, tmp_path: Path) -> None:
+    manifest_path = _preview_files(
+        tmp_path,
+        {
+            "items_count": 5,
+            "minimum_external_items": 5,
+            "limited_signal_volume": False,
+            "external_send_ready": True,
+            "send_approval_enforced": True,
+            "approved": False,
+        },
+    )
+    monkeypatch.setattr(
+        weekly_email,
+        "_send_resend_email",
+        lambda *args, **kwargs: pytest.fail("unapproved public email must not send"),
+    )
+
+    result = weekly_email.send_weekly_email_test(manifest_path)
+
+    assert result["mode"] == "skipped"
+    assert result["skip_reason"] == "approval_required"
+
+
+def test_public_launch_manifest_requires_explicit_approval(monkeypatch) -> None:
+    monkeypatch.setenv("WEEKLY_EMAIL_PUBLIC_LAUNCH", "true")
+    monkeypatch.delenv("WEEKLY_EMAIL_REQUIRE_APPROVAL", raising=False)
+    monkeypatch.delenv("WEEKLY_EMAIL_APPROVED", raising=False)
+
+    manifest = weekly_email.build_weekly_email_manifest(
+        {"run_date": "2026-10-29", "items": [{"company": f"Company {index}"} for index in range(5)]},
+        date(2026, 10, 29),
+        Path("preview.html"),
+        Path("preview.txt"),
+        7,
+    )
+
+    assert manifest["approval_required"] is True
+    assert manifest["approved"] is False
+    assert manifest["send_approval_enforced"] is True
+
+
+def test_public_intro_is_limited_to_configured_date(monkeypatch) -> None:
+    monkeypatch.setenv("WEEKLY_EMAIL_PUBLIC_LAUNCH", "true")
+    monkeypatch.setenv("WEEKLY_EMAIL_PUBLIC_INTRO_DATE", "2026-11-02")
+
+    assert weekly_email._public_intro_enabled(date(2026, 11, 2)) is True
+    assert weekly_email._public_intro_enabled(date(2026, 11, 9)) is False
+
+
+def test_resend_retries_transient_network_failure(monkeypatch) -> None:
+    calls = {"count": 0}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return b'{"id":"ok"}'
+
+    def flaky(request, timeout=30):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise URLError("temporary")
+        return Response()
+
+    monkeypatch.setenv("RESEND_API_KEY", "key")
+    monkeypatch.setattr(weekly_email, "urlopen", flaky)
+    monkeypatch.setattr(weekly_email.time, "sleep", lambda _: None)
+
+    assert weekly_email._send_resend_email({"subject": "test"}) == {"id": "ok"}
+    assert calls["count"] == 2
+
+
+def test_public_launch_preflight_requires_broadcast_reply_to_and_unsubscribe(monkeypatch) -> None:
+    monkeypatch.setenv("WEEKLY_EMAIL_PUBLIC_LAUNCH", "true")
+
+    with pytest.raises(weekly_email.WeeklyEmailError, match="Public weekly email preflight failed") as exc_info:
+        weekly_email._validate_public_delivery_config(
+            segment_id="",
+            sender="BidMatrix <weekly@example.com>",
+            reply_to="",
+            html_body="<p>Hello</p>",
+            text_body="Hello",
+        )
+
+    message = str(exc_info.value)
+    assert "WEEKLY_EMAIL_SEGMENT_ID is required" in message
+    assert "WEEKLY_EMAIL_FROM must use updates.bid-matrix.com" in message
+    assert "WEEKLY_EMAIL_REPLY_TO must be a monitored email address" in message
+    assert "HTML must include the Resend unsubscribe URL" in message
+    assert "plain text must include the Resend unsubscribe URL" in message
+
+
+def test_public_launch_preflight_accepts_safe_broadcast_config(monkeypatch) -> None:
+    monkeypatch.setenv("WEEKLY_EMAIL_PUBLIC_LAUNCH", "true")
+
+    weekly_email._validate_public_delivery_config(
+        segment_id="segment_public",
+        sender="BidMatrix <weekly@updates.bid-matrix.com>",
+        reply_to="Ksenia <ksenia@bid-matrix.com>",
+        html_body='<a href="{{{RESEND_UNSUBSCRIBE_URL}}}">Unsubscribe</a>',
+        text_body="Unsubscribe: {{{RESEND_UNSUBSCRIBE_URL}}}",
+    )
 
 
 def test_weekly_email_broadcast_dry_run_never_sends(monkeypatch, tmp_path: Path) -> None:
@@ -1465,8 +1644,12 @@ def test_weekly_email_github_workflow_runs_monday_morning_moscow_without_telegra
     assert "bidmatrix-monitor --weekly-email-test-run --weekly-email-refresh-source-report" in workflow
     assert "RESEND_API_KEY" in workflow
     assert "WEEKLY_EMAIL_FROM" in workflow
+    assert "WEEKLY_EMAIL_REPLY_TO" in workflow
     assert "WEEKLY_EMAIL_SEGMENT_ID" in workflow
     assert "WEEKLY_EMAIL_TO" in workflow
+    assert "WEEKLY_EMAIL_PUBLIC_LAUNCH: 'true'" in workflow
+    assert "WEEKLY_EMAIL_REQUIRE_APPROVAL: 'true'" in workflow
+    assert "WEEKLY_EMAIL_APPROVED" in workflow
     assert "TELEGRAM_BOT_TOKEN" not in workflow
     assert "BIDMATRIX_DELIVERY_CHANNEL" not in workflow
     assert "\n        run: bidmatrix-monitor --weekly\n" not in workflow

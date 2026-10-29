@@ -288,11 +288,12 @@ def main() -> None:
     _print_pipeline_state(report.diagnostics)
     if args.diagnostics:
         _print_diagnostics(report.diagnostics)
+    delivery_failures: list[str] = []
     try:
         maybe_deliver_report(config, markdown_path, "daily")
-    except DeliveryError:
-        print("RUN_FINISHED mode=daily status=delivery_failed")
-        raise SystemExit(2)
+    except DeliveryError as exc:
+        delivery_failures.append(f"market_brief:{exc}")
+        print("DAILY_PRODUCT_FAILED product=market_brief stage=delivery")
     try:
         print("MARKETING_INSIGHTS_RUN_STARTED")
         marketing_markdown_path, marketing_json_path, _marketing_payload = build_marketing_insights_radar_preview()
@@ -303,8 +304,11 @@ def main() -> None:
             f"markdown={marketing_markdown_path} json={marketing_json_path}"
         )
         maybe_deliver_marketing_insights_report(config, marketing_markdown_path)
-    except DeliveryError:
-        print("RUN_FINISHED mode=daily status=delivery_failed")
+    except Exception as exc:
+        delivery_failures.append(f"marketing_insights:{type(exc).__name__}:{exc}")
+        print(f"DAILY_PRODUCT_FAILED product=marketing_insights error_type={type(exc).__name__} error={exc}")
+    if delivery_failures:
+        print(f"RUN_FINISHED mode=daily status=partial_failure failures={len(delivery_failures)}")
         raise SystemExit(2)
     print("RUN_FINISHED mode=daily status=success")
 

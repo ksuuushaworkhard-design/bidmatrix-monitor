@@ -1,5 +1,13 @@
 name: BidMatrix Market Brief
 
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: bidmatrix-market-brief-${{ github.event_name == 'pull_request' && github.event.pull_request.number || 'delivery' }}
+  cancel-in-progress: false
+
 on:
   pull_request:
     branches:
@@ -37,6 +45,20 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]" || pip install -e .
+
+      - name: Restore delivery state
+        if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p reports /tmp/bidmatrix-delivery-state
+          while read -r run_id; do
+            [ -n "$run_id" ] || continue
+            if gh run download "$run_id" --name "delivery-state-$run_id" --dir /tmp/bidmatrix-delivery-state; then
+              state_file="$(find /tmp/bidmatrix-delivery-state -type f -name delivery-state.json -print -quit)"
+              if [ -n "$state_file" ]; then cp "$state_file" reports/delivery-state.json; break; fi
+            fi
+          done < <(gh run list --workflow market-brief.yml --branch main --status success --limit 10 --json databaseId --jq '.[].databaseId')
 
       - name: Run pull request checks
         if: ${{ github.event_name == 'pull_request' }}
@@ -77,3 +99,12 @@ jobs:
           name: logs-${{ github.run_id }}
           path: logs/
           if-no-files-found: ignore
+
+      - name: Upload delivery state artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: delivery-state-${{ github.run_id }}
+          path: reports/delivery-state.json
+          if-no-files-found: ignore
+          retention-days: 30

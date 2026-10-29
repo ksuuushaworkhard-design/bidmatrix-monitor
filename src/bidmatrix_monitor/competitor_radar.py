@@ -157,6 +157,7 @@ def load_competitor_radar_settings(config_path: str | Path) -> dict[str, Any]:
         "num_results_per_company": int(raw.get("num_results_per_company", 3)),
         "request_timeout_seconds": int(raw.get("request_timeout_seconds", 20)),
         "companies": companies,
+        "rotate_companies": bool(raw.get("rotate_companies", False)),
     }
 
 
@@ -172,6 +173,9 @@ def collect_competitor_radar_payload(
 
     query_cap = max_companies if max_companies is not None else int(settings["max_companies_per_run"])
     companies = list(settings["companies"])
+    if settings.get("rotate_companies") and companies:
+        offset = date.today().toordinal() % len(companies)
+        companies = companies[offset:] + companies[:offset]
     companies_checked = companies[: max(0, query_cap)]
 
     exa = TimeoutExa(api_key=api_key, request_timeout_seconds=int(settings["request_timeout_seconds"]))
