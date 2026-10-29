@@ -7,10 +7,11 @@ import html
 import json
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from urllib.request import Request, urlopen
 
 from dotenv import load_dotenv
@@ -24,8 +25,12 @@ class WeeklyEmailError(RuntimeError):
 
 WEEKLY_EMAIL_TARGET_ITEMS = 5
 WEEKLY_EMAIL_MINIMUM_EXTERNAL_ITEMS = 5
-WEEKLY_EMAIL_FALLBACK_DAYS = 30
+WEEKLY_EMAIL_FALLBACK_DAYS = 7
 WEEKLY_EMAIL_MAX_BCC_RECIPIENTS = 49
+WEEKLY_EMAIL_SITE_URL = "https://www.bid-matrix.com"
+WEEKLY_EMAIL_COMPANY_ADDRESS = (
+    "Bid Matrix Pte. Ltd. · 60 Paya Lebar Road, #11-53, Paya Lebar Square, Singapore 409051"
+)
 WEEKLY_EMAIL_LAUNCH_DATE = date(2026, 9, 28)
 WEEKLY_EMAIL_LAUNCH_INTRO = (
     "Hi everyone! 👋 Ksenia here, Marketing Manager at BidMatrix.\n\n"
@@ -35,6 +40,13 @@ WEEKLY_EMAIL_LAUNCH_INTRO = (
     "From now on, this industry news digest will arrive automatically every Monday. It will help us spot market "
     "changes earlier, follow competitors, and keep emerging trends in mind as we plan and improve our work. 🚀\n\n"
     "I’d love to hear your feedback and suggestions. Let’s make this digest as useful as possible for the whole team. 💡"
+)
+WEEKLY_EMAIL_PUBLIC_LAUNCH_INTRO = (
+    "Hello from the BidMatrix team! 👋\n\n"
+    "Welcome to the BidMatrix Weekly Growth Brief — a concise roundup of the industry developments "
+    "worth knowing across programmatic advertising, app growth, measurement, AI, and media buying.\n\n"
+    "Every week, we’ll select the most relevant news and explain what it means for marketers, so you can "
+    "stay informed without spending hours following industry feeds."
 )
 
 
@@ -67,6 +79,7 @@ def build_weekly_email_preview(
         "run_date": output_date.isoformat(),
         "email_subject": weekly_email_subject(digest),
         "include_launch_intro": output_date == WEEKLY_EMAIL_LAUNCH_DATE,
+        "include_public_launch_intro": _public_intro_enabled(output_date),
     }
 
     stem = f"weekly-email-preview-{output_date.isoformat()}"
@@ -93,10 +106,15 @@ def build_weekly_email_manifest(
     items_count = len(items)
     minimum_external_items = WEEKLY_EMAIL_MINIMUM_EXTERNAL_ITEMS
     external_send_ready = items_count >= minimum_external_items and not bool(digest.get("limited_signal_volume"))
+    approval_required = _env_flag("WEEKLY_EMAIL_REQUIRE_APPROVAL") or _env_flag(
+        "WEEKLY_EMAIL_PUBLIC_LAUNCH"
+    )
+    approved = not approval_required or _env_flag("WEEKLY_EMAIL_APPROVED")
     return {
         "status": "ready_to_send",
-        "approval_required": False,
-        "approved": True,
+        "approval_required": approval_required,
+        "approved": approved,
+        "send_approval_enforced": approval_required,
         "approved_by": None,
         "approved_at": None,
         "external_send_ready": external_send_ready,
@@ -336,12 +354,8 @@ def _is_quality_fallback_item(item: dict[str, Any]) -> bool:
 def _pipeline_quality_rank(item: dict[str, Any], output_date: date) -> tuple[int, int, int]:
     published = _pipeline_item_date(item)
     age_days = (output_date - published).days if published else WEEKLY_EMAIL_FALLBACK_DAYS + 1
-    if age_days <= 7:
+    if 0 <= age_days <= WEEKLY_EMAIL_FALLBACK_DAYS:
         freshness_rank = 3
-    elif age_days <= 14:
-        freshness_rank = 2
-    elif age_days <= WEEKLY_EMAIL_FALLBACK_DAYS:
-        freshness_rank = 1
     else:
         freshness_rank = 0
     confidence_rank = {"high": 2, "medium": 1}.get(str(item.get("confidence") or "medium").lower(), 0)
@@ -552,8 +566,16 @@ def send_weekly_email_test(
         }
 
     sender = _required_env("WEEKLY_EMAIL_FROM")
+    reply_to = os.environ.get("WEEKLY_EMAIL_REPLY_TO", "").strip()
     html_body = html_path.read_text(encoding="utf-8")
     text_body = text_path.read_text(encoding="utf-8")
+    _validate_public_delivery_config(
+        segment_id=segment_id,
+        sender=sender,
+        reply_to=reply_to,
+        html_body=html_body,
+        text_body=text_body,
+    )
 
     if segment_id:
         broadcast_payload = {
@@ -564,6 +586,8 @@ def send_weekly_email_test(
             "text": _with_broadcast_unsubscribe_text(text_body),
             "send": True,
         }
+        if reply_to:
+            broadcast_payload["reply_to"] = reply_to
         result = {
             "mode": "dry_run" if dry_run else "sent",
             "delivery_method": "broadcast",
@@ -601,6 +625,8 @@ def send_weekly_email_test(
         "html": html_body,
         "text": text_body,
     }
+    if reply_to:
+        payload["reply_to"] = reply_to
     result = {
         "mode": "dry_run" if dry_run else "sent",
         "delivery_method": "transactional_bcc",
@@ -636,6 +662,8 @@ def send_weekly_email_test(
 
 
 def _weekly_email_send_skip_reason(manifest: dict[str, Any]) -> str | None:
+    if bool(manifest.get("send_approval_enforced")) and not bool(manifest.get("approved")):
+        return "approval_required"
     items_count = _int_value(manifest.get("items_count"))
     minimum_items = _int_value(manifest.get("minimum_external_items")) or WEEKLY_EMAIL_TARGET_ITEMS
     if items_count is not None and items_count < minimum_items:
@@ -699,6 +727,8 @@ def render_weekly_email_text(digest: dict[str, Any]) -> str:
     ]
     if digest.get("include_launch_intro"):
         lines.extend([WEEKLY_EMAIL_LAUNCH_INTRO, "", "---", ""])
+    if digest.get("include_public_launch_intro"):
+        lines.extend([WEEKLY_EMAIL_PUBLIC_LAUNCH_INTRO, "", "---", ""])
     lines.extend([
         "This week's market story:",
         _takeaway(digest),
@@ -713,12 +743,17 @@ def render_weekly_email_text(digest: dict[str, Any]) -> str:
                     f"{index}. {_company(item)} - {_event(item)}",
                     f"What it means: {_item_why(item)}",
                     f"How to use it: {_item_angle(item)}",
-                    f"Source: {_url_or_source(item)}",
+                    f"Source: {_tracked_source(item, run_date)}",
                     "",
                 ]
             )
     else:
         lines.extend(["No weekly moves were ready for this email preview.", ""])
+
+    lines.extend(["---", "BidMatrix · bid-matrix.com"])
+    company_address = os.environ.get("WEEKLY_EMAIL_COMPANY_ADDRESS", WEEKLY_EMAIL_COMPANY_ADDRESS).strip()
+    lines.append(company_address)
+    lines.append("Unsubscribe: {{{RESEND_UNSUBSCRIBE_URL}}}")
 
     return "\n".join(lines).rstrip() + "\n"
 
@@ -729,14 +764,19 @@ def render_weekly_email_html(digest: dict[str, Any]) -> str:
     run_date = str(digest.get("run_date") or date.today().isoformat())
     theme_line = _subject_theme(subject)
     item_blocks = "\n".join(
-        _item_html(item, index) for index, item in enumerate(items[:WEEKLY_EMAIL_TARGET_ITEMS], start=1)
+        _item_html(item, index, run_date) for index, item in enumerate(items[:WEEKLY_EMAIL_TARGET_ITEMS], start=1)
     )
     if not item_blocks:
         item_blocks = (
             '<p style="margin:0; font-size:15px; line-height:1.55; color:#000000;">'
             "No weekly moves were ready for this email preview.</p>"
         )
-    launch_intro = _launch_intro_html() if digest.get("include_launch_intro") else ""
+    launch_intro = _launch_intro_html(WEEKLY_EMAIL_LAUNCH_INTRO) if digest.get("include_launch_intro") else ""
+    public_launch_intro = (
+        _launch_intro_html(WEEKLY_EMAIL_PUBLIC_LAUNCH_INTRO)
+        if digest.get("include_public_launch_intro")
+        else ""
+    )
     return f"""<!doctype html>
 <html>
   <head>
@@ -763,6 +803,7 @@ def render_weekly_email_html(digest: dict[str, Any]) -> str:
             <tr>
               <td style="padding:24px 32px 8px;">
                 {launch_intro}
+                {public_launch_intro}
                 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#ffffff; border:1px solid #D9D9D9; border-left:4px solid #09CAB6; border-radius:10px;">
                   <tr>
                     <td style="padding:18px 20px;">
@@ -779,6 +820,11 @@ def render_weekly_email_html(digest: dict[str, Any]) -> str:
                 {item_blocks}
               </td>
             </tr>
+            <tr>
+              <td style="padding:20px 32px 24px; background:#000000; text-align:center;">
+                {_public_footer_html()}
+              </td>
+            </tr>
           </table>
         </td>
       </tr>
@@ -788,8 +834,8 @@ def render_weekly_email_html(digest: dict[str, Any]) -> str:
 """
 
 
-def _item_html(item: dict[str, Any], index: int) -> str:
-    source = _url_or_source(item)
+def _item_html(item: dict[str, Any], index: int, run_date: str) -> str:
+    source = _tracked_source(item, run_date)
     return f"""
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-top:1px solid #D9D9D9;">
   <tr>
@@ -800,7 +846,7 @@ def _item_html(item: dict[str, Any], index: int) -> str:
           <td style="padding-left:12px; color:#000000; font-size:18px; font-weight:bold;">{html.escape(_company(item))}</td>
         </tr>
       </table>
-      <h3 style="margin:0 0 12px; font-family:Oswald, Oswaldo, Arial, Helvetica, sans-serif; font-weight:400; font-size:22px; line-height:1.3; color:#000000;">{html.escape(_event(item))}</h3>
+      <h3 style="margin:0 0 12px; font-family:Oswald, Oswaldo, Arial, Helvetica, sans-serif; font-weight:400; font-size:22px; line-height:1.3; color:#000000;">{html.escape(_item_headline(item))}</h3>
       <p style="margin:0 0 10px; font-size:15px; line-height:1.55; color:#000000;"><strong style="color:#000000;">What it means:</strong> {html.escape(_item_why(item))}</p>
       <p style="margin:0 0 14px; font-size:15px; line-height:1.55; color:#000000;"><strong style="color:#000000;">How to use it:</strong> {html.escape(_item_angle(item))}</p>
       {_source_link_html(item, source)}
@@ -842,13 +888,13 @@ def _logo_html() -> str:
     )
 
 
-def _launch_intro_html() -> str:
+def _launch_intro_html(intro: str) -> str:
     paragraphs = "".join(
         '<p style="margin:{}; font-size:15px; line-height:1.55; color:#000000;">{}</p>'.format(
             "0" if index == 0 else "12px 0 0",
             html.escape(paragraph),
         )
-        for index, paragraph in enumerate(WEEKLY_EMAIL_LAUNCH_INTRO.split("\n\n"))
+        for index, paragraph in enumerate(intro.split("\n\n"))
     )
     return (
         '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" '
@@ -911,6 +957,14 @@ def _event(item: dict[str, Any]) -> str:
     return _clean_sentence(str(item.get("event") or item.get("summary") or "A relevant market move emerged."), 220)
 
 
+def _item_headline(item: dict[str, Any]) -> str:
+    company = _company(item)
+    event = _event(item)
+    if event.lower().startswith(company.lower()):
+        return event
+    return f"{company} {event[0].lower() + event[1:] if event else 'shared a relevant market update.'}"
+
+
 def _item_why(item: dict[str, Any]) -> str:
     value = item.get("why_it_matters") or item.get("market_context") or item.get("why_now") or item.get("summary")
     return _externalize_bidmatrix_copy(
@@ -933,7 +987,7 @@ def _url_or_source(item: dict[str, Any]) -> str:
 
 
 def _source_link_html(item: dict[str, Any], source: str) -> str:
-    url = str(item.get("url") or "").strip()
+    url = source if source.startswith(("http://", "https://")) else ""
     label = _clean_source_label(str(item.get("source") or source).strip())
     if url.startswith("http://") or url.startswith("https://"):
         return (
@@ -945,6 +999,44 @@ def _source_link_html(item: dict[str, Any], source: str) -> str:
     return (
         '<p style="margin:0; font-size:14px; line-height:1.5; color:#000000;">'
         f"<strong>Source:</strong> {html.escape(_clean_source_label(source))}</p>"
+    )
+
+
+def _tracked_source(item: dict[str, Any], run_date: str) -> str:
+    url = str(item.get("url") or "").strip()
+    if not url.startswith(("http://", "https://")):
+        return _url_or_source(item)
+    parsed = urlparse(url)
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    query.update(
+        {
+            "utm_source": "bidmatrix_weekly_email",
+            "utm_medium": "email",
+            "utm_campaign": f"weekly_growth_brief_{run_date.replace('-', '_')}",
+            "utm_content": _utm_value(_company(item)),
+        }
+    )
+    return urlunparse(parsed._replace(query=urlencode(query)))
+
+
+def _utm_value(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_") or "story"
+
+
+def _public_footer_html() -> str:
+    company_address = os.environ.get("WEEKLY_EMAIL_COMPANY_ADDRESS", WEEKLY_EMAIL_COMPANY_ADDRESS).strip()
+    address_html = (
+        f'<p style="margin:6px 0 0; color:#D9D9D9; font-size:11px; line-height:1.4;">'
+        f"{html.escape(company_address)}</p>"
+    )
+    return (
+        '<p style="margin:0; color:#ffffff; font-size:13px; line-height:1.5;">'
+        'BidMatrix · <a href="https://www.bid-matrix.com" style="color:#09CAB6;">bid-matrix.com</a></p>'
+        f"{address_html}"
+        '<p style="margin:10px 0 0; color:#D9D9D9; font-size:12px; line-height:1.5;">'
+        "You are receiving this weekly industry brief because you subscribed to BidMatrix updates. "
+        '<a href="{{{RESEND_UNSUBSCRIBE_URL}}}" style="color:#09CAB6; text-decoration:underline;">'
+        "Unsubscribe</a></p>"
     )
 
 
@@ -984,6 +1076,42 @@ def _required_env(key: str) -> str:
     if not value:
         raise WeeklyEmailError(f"Missing required environment variable: {key}")
     return value
+
+
+def _env_flag(key: str) -> bool:
+    return os.environ.get(key, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _public_intro_enabled(output_date: date) -> bool:
+    if _env_flag("WEEKLY_EMAIL_INCLUDE_PUBLIC_INTRO"):
+        return True
+    configured_date = os.environ.get("WEEKLY_EMAIL_PUBLIC_INTRO_DATE", "").strip()
+    return bool(configured_date and configured_date == output_date.isoformat())
+
+
+def _validate_public_delivery_config(
+    *,
+    segment_id: str,
+    sender: str,
+    reply_to: str,
+    html_body: str,
+    text_body: str,
+) -> None:
+    if not _env_flag("WEEKLY_EMAIL_PUBLIC_LAUNCH"):
+        return
+    errors: list[str] = []
+    if not segment_id:
+        errors.append("WEEKLY_EMAIL_SEGMENT_ID is required")
+    if "@updates.bid-matrix.com" not in sender.lower():
+        errors.append("WEEKLY_EMAIL_FROM must use updates.bid-matrix.com")
+    if "@" not in reply_to or reply_to.startswith("@"):
+        errors.append("WEEKLY_EMAIL_REPLY_TO must be a monitored email address")
+    if "{{{RESEND_UNSUBSCRIBE_URL}}}" not in html_body:
+        errors.append("HTML must include the Resend unsubscribe URL")
+    if "{{{RESEND_UNSUBSCRIBE_URL}}}" not in text_body:
+        errors.append("plain text must include the Resend unsubscribe URL")
+    if errors:
+        raise WeeklyEmailError("Public weekly email preflight failed: " + "; ".join(errors))
 
 
 def _weekly_email_recipient_value() -> str:
@@ -1046,17 +1174,15 @@ def _weekly_email_broadcast_idempotency_key(
 
 
 def _with_broadcast_unsubscribe_html(html_body: str) -> str:
-    footer = (
-        '<p style="margin:24px 0 0; text-align:center; font-size:12px; line-height:1.5; color:#000000;">'
-        '<a href="{{{RESEND_UNSUBSCRIBE_URL}}}" style="color:#000000; text-decoration:underline;">'
-        "Unsubscribe</a></p>"
-    )
-    if "</body>" in html_body:
-        return html_body.replace("</body>", f"{footer}\n  </body>")
-    return html_body.rstrip() + footer
+    if "{{{RESEND_UNSUBSCRIBE_URL}}}" in html_body:
+        return html_body
+    footer = '<p><a href="{{{RESEND_UNSUBSCRIBE_URL}}}">Unsubscribe</a></p>'
+    return html_body.replace("</body>", f"{footer}\n  </body>") if "</body>" in html_body else html_body + footer
 
 
 def _with_broadcast_unsubscribe_text(text_body: str) -> str:
+    if "{{{RESEND_UNSUBSCRIBE_URL}}}" in text_body:
+        return text_body
     return text_body.rstrip() + "\n\nUnsubscribe: {{{RESEND_UNSUBSCRIBE_URL}}}\n"
 
 
@@ -1071,30 +1197,7 @@ def _send_resend_email(
     *,
     idempotency_key: str | None = None,
 ) -> dict[str, Any]:
-    api_key = _required_env("RESEND_API_KEY")
-    body = json.dumps(payload).encode("utf-8")
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-        "User-Agent": "bidmatrix-monitor-weekly-email/0.1",
-    }
-    if idempotency_key:
-        headers["Idempotency-Key"] = idempotency_key
-    request = Request(
-        "https://api.resend.com/emails",
-        data=body,
-        method="POST",
-        headers=headers,
-    )
-    try:
-        with urlopen(request, timeout=30) as response:
-            raw = response.read().decode("utf-8")
-    except HTTPError as exc:
-        details = exc.read().decode("utf-8", errors="replace")
-        raise WeeklyEmailError(f"Resend API returned HTTP {exc.code}: {details}") from exc
-    except URLError as exc:
-        raise WeeklyEmailError(f"Resend API request failed: {exc.reason}") from exc
-    return json.loads(raw) if raw else {}
+    return _post_resend_json("https://api.resend.com/emails", payload, idempotency_key)
 
 
 def _send_resend_broadcast(
@@ -1119,16 +1222,25 @@ def _post_resend_json(
     }
     if idempotency_key:
         headers["Idempotency-Key"] = idempotency_key
-    request = Request(url, data=body, method="POST", headers=headers)
-    try:
-        with urlopen(request, timeout=30) as response:
-            raw = response.read().decode("utf-8")
-    except HTTPError as exc:
-        details = exc.read().decode("utf-8", errors="replace")
-        raise WeeklyEmailError(f"Resend API returned HTTP {exc.code}: {details}") from exc
-    except URLError as exc:
-        raise WeeklyEmailError(f"Resend API request failed: {exc.reason}") from exc
-    return json.loads(raw) if raw else {}
+    for attempt in range(3):
+        request = Request(url, data=body, method="POST", headers=headers)
+        try:
+            with urlopen(request, timeout=30) as response:
+                raw = response.read().decode("utf-8")
+            return json.loads(raw) if raw else {}
+        except HTTPError as exc:
+            details = exc.read().decode("utf-8", errors="replace")
+            if exc.code not in {408, 429, 500, 502, 503, 504} or attempt == 2:
+                raise WeeklyEmailError(f"Resend API returned HTTP {exc.code}: {details}") from exc
+            retry_after = exc.headers.get("Retry-After", "") if exc.headers else ""
+            delay = min(30.0, float(retry_after)) if retry_after.replace(".", "", 1).isdigit() else 2.0 ** attempt
+        except URLError as exc:
+            if attempt == 2:
+                raise WeeklyEmailError(f"Resend API request failed: {exc.reason}") from exc
+            delay = 2.0 ** attempt
+        print(f"WEEKLY_EMAIL_DELIVERY_RETRY attempt={attempt + 2} delay_seconds={delay:g}")
+        time.sleep(delay)
+    raise WeeklyEmailError("Resend API request failed after retries")
 
 
 def _clean_sentence(value: str, limit: int) -> str:

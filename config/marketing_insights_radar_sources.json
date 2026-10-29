@@ -3,6 +3,7 @@
   "max_companies_per_run": 25,
   "num_results_per_company": 3,
   "request_timeout_seconds": 20,
+  "rotate_companies": true,
   "companies": [
     "AppsFlyer",
     "Adjust",
