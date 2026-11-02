@@ -10,6 +10,7 @@ from urllib.request import Request, urlopen
 
 SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly"
 EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+HTTP_USER_AGENT = "BidMatrix-Monitor/1.0 (+https://www.bid-matrix.com)"
 
 
 class SubscriberSyncError(RuntimeError):
@@ -79,7 +80,16 @@ def _load_sheet_subscribers(spreadsheet_id: str, sheet_range: str, credentials_j
         f"https://sheets.googleapis.com/v4/spreadsheets/{quote(spreadsheet_id, safe='')}/values/"
         f"{quote(sheet_range, safe='')}?majorDimension=ROWS"
     )
-    payload = _request_json(Request(url, headers={"Authorization": f"Bearer {credentials.token}"}))
+    payload = _request_json(
+        Request(
+            url,
+            headers={
+                "Authorization": f"Bearer {credentials.token}",
+                "Accept": "application/json",
+                "User-Agent": HTTP_USER_AGENT,
+            },
+        )
+    )
     rows = payload.get("values") or []
     if not rows:
         return []
@@ -122,7 +132,12 @@ def _resend_json(method: str, url: str, api_key: str, payload: dict | None = Non
         url,
         data=body,
         method=method,
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "User-Agent": HTTP_USER_AGENT,
+        },
     )
     return _request_json(request)
 
