@@ -3,6 +3,22 @@ from __future__ import annotations
 from bidmatrix_monitor import subscriber_sync
 
 
+def test_resend_request_uses_explicit_user_agent(monkeypatch) -> None:
+    captured = {}
+
+    def fake_request(request):
+        captured["request"] = request
+        return {"data": []}
+
+    monkeypatch.setattr(subscriber_sync, "_request_json", fake_request)
+
+    subscriber_sync._resend_json("GET", "https://api.resend.com/segments/example/contacts", "secret")
+
+    request = captured["request"]
+    assert request.get_header("User-agent") == subscriber_sync.HTTP_USER_AGENT
+    assert request.get_header("Accept") == "application/json"
+
+
 def test_sync_adds_only_new_contacts_without_resubscribing(monkeypatch) -> None:
     monkeypatch.setenv("GOOGLE_SHEETS_SPREADSHEET_ID", "sheet")
     monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_JSON", "{}")
