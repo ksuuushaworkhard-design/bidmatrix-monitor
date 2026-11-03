@@ -21,17 +21,23 @@ def write_weekly_digest(report_dir: str | Path, days: int = 7) -> tuple[Path, Pa
     return markdown_path, json_path
 
 
-def build_weekly_digest(report_dir: Path, days: int = 7) -> dict[str, Any]:
-    reports = _load_recent_curated_reports(report_dir, days)
+def build_weekly_digest(
+    report_dir: Path,
+    days: int = 7,
+    *,
+    run_date: date | None = None,
+) -> dict[str, Any]:
+    effective_date = run_date or date.today()
+    reports = _load_recent_curated_reports(report_dir, days, effective_date)
     items = _dedupe_items(_collect_items(reports))
-    selected_items, weekly_diagnostics = _select_weekly_items(items, date.today())
+    selected_items, weekly_diagnostics = _select_weekly_items(items, effective_date)
     low_volume = len(selected_items) < 2
     developments = _concrete_developments(selected_items[:5])
     background_candidates = [item for item in items if str(item.get("url") or "").strip() not in {str(v.get("url") or "").strip() for v in selected_items}]
     background_watchlist = _concrete_developments(background_candidates[:2]) if low_volume else []
 
     return {
-        "run_date": date.today().isoformat(),
+        "run_date": effective_date.isoformat(),
         "window_days": days,
         "source_reports": [report["path"] for report in reports],
         "report_count": len(reports),
@@ -130,8 +136,8 @@ def render_weekly_markdown(digest: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _load_recent_curated_reports(report_dir: Path, days: int) -> list[dict[str, Any]]:
-    cutoff = date.today() - timedelta(days=days - 1)
+def _load_recent_curated_reports(report_dir: Path, days: int, run_date: date | None = None) -> list[dict[str, Any]]:
+    cutoff = (run_date or date.today()) - timedelta(days=days - 1)
     reports = []
     for path in sorted(report_dir.glob("bidmatrix-monitor-*-curated.json")):
         report_date = _date_from_daily_filename(path)
@@ -242,7 +248,7 @@ def _select_weekly_items(items: list[dict[str, Any]], run_date: date) -> tuple[l
     )
 
     add_candidates(ranked, allowed={"fresh_7d"}, unique_bucket=True)
-    if len(selected) < 3:
+    if len(selected) < 5:
         add_candidates(ranked, allowed={"fresh_7d"}, unique_bucket=False)
 
     confidence_relaxation_used = False

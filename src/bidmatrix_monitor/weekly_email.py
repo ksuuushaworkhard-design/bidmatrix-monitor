@@ -29,7 +29,7 @@ WEEKLY_EMAIL_FALLBACK_DAYS = 7
 WEEKLY_EMAIL_MAX_BCC_RECIPIENTS = 49
 WEEKLY_EMAIL_SITE_URL = "https://www.bid-matrix.com"
 WEEKLY_EMAIL_COMPANY_ADDRESS = (
-    "Bid Matrix Pte. Ltd. · 60 Paya Lebar Road, #11-53, Paya Lebar Square, Singapore 409051"
+    "Bid Matrix Pte. Ltd. · 8 Eu Tong Sen Street, #16-81, The Central, Singapore 059818"
 )
 WEEKLY_EMAIL_LAUNCH_DATE = date(2026, 9, 28)
 WEEKLY_EMAIL_LAUNCH_INTRO = (
@@ -42,11 +42,12 @@ WEEKLY_EMAIL_LAUNCH_INTRO = (
     "I’d love to hear your feedback and suggestions. Let’s make this digest as useful as possible for the whole team. 💡"
 )
 WEEKLY_EMAIL_PUBLIC_LAUNCH_INTRO = (
-    "Hello from the BidMatrix team! 👋\n\n"
-    "Welcome to the BidMatrix Weekly Growth Brief — a concise roundup of the industry developments "
-    "worth knowing across programmatic advertising, app growth, measurement, AI, and media buying.\n\n"
-    "Every week, we’ll select the most relevant news and explain what it means for marketers, so you can "
-    "stay informed without spending hours following industry feeds."
+    "Hello from BidMatrix! 👋\n\n"
+    "This is the BidMatrix Weekly Growth Brief — our weekly roundup of the most important news across "
+    "programmatic advertising, app growth, measurement, AI, and media buying.\n\n"
+    "Every week, we’ll share a short selection of industry developments worth knowing, with context on "
+    "what they mean for marketers. It’s designed to help you stay current without spending hours following "
+    "industry feeds."
 )
 
 
@@ -62,7 +63,7 @@ def build_weekly_email_preview(
     output_date = run_date or date.today()
 
     digest_source_dir = Path(source_report_dir) if source_report_dir else output_dir
-    digest = build_weekly_digest(digest_source_dir, days)
+    digest = build_weekly_digest(digest_source_dir, days, run_date=output_date)
     if len(_top_items(digest)) < WEEKLY_EMAIL_TARGET_ITEMS:
         digest = _prefer_pipeline_selected_digest_items(
             digest,
@@ -750,7 +751,7 @@ def render_weekly_email_text(digest: dict[str, Any]) -> str:
     else:
         lines.extend(["No weekly moves were ready for this email preview.", ""])
 
-    lines.extend(["---", "BidMatrix · bid-matrix.com"])
+    lines.extend(["---", f"BidMatrix · {_tracked_site_url(run_date)}"])
     company_address = os.environ.get("WEEKLY_EMAIL_COMPANY_ADDRESS", WEEKLY_EMAIL_COMPANY_ADDRESS).strip()
     lines.append(company_address)
     lines.append("Unsubscribe: {{{RESEND_UNSUBSCRIBE_URL}}}")
@@ -822,7 +823,7 @@ def render_weekly_email_html(digest: dict[str, Any]) -> str:
             </tr>
             <tr>
               <td style="padding:20px 32px 24px; background:#000000; text-align:center;">
-                {_public_footer_html()}
+                {_public_footer_html(run_date)}
               </td>
             </tr>
           </table>
@@ -1023,18 +1024,30 @@ def _utm_value(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_") or "story"
 
 
-def _public_footer_html() -> str:
+def _tracked_site_url(_run_date: str) -> str:
+    parsed = urlparse(WEEKLY_EMAIL_SITE_URL)
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    query.update(
+        {
+            "utm_source": "bidmatrix_weekly_email",
+            "utm_medium": "email",
+        }
+    )
+    return urlunparse(parsed._replace(query=urlencode(query)))
+
+
+def _public_footer_html(run_date: str) -> str:
     company_address = os.environ.get("WEEKLY_EMAIL_COMPANY_ADDRESS", WEEKLY_EMAIL_COMPANY_ADDRESS).strip()
+    site_url = html.escape(_tracked_site_url(run_date), quote=True)
     address_html = (
         f'<p style="margin:6px 0 0; color:#D9D9D9; font-size:11px; line-height:1.4;">'
         f"{html.escape(company_address)}</p>"
     )
     return (
         '<p style="margin:0; color:#ffffff; font-size:13px; line-height:1.5;">'
-        'BidMatrix · <a href="https://www.bid-matrix.com" style="color:#09CAB6;">bid-matrix.com</a></p>'
+        f'BidMatrix · <a href="{site_url}" style="color:#09CAB6;">bid-matrix.com</a></p>'
         f"{address_html}"
         '<p style="margin:10px 0 0; color:#D9D9D9; font-size:12px; line-height:1.5;">'
-        "You are receiving this weekly industry brief because you subscribed to BidMatrix updates. "
         '<a href="{{{RESEND_UNSUBSCRIBE_URL}}}" style="color:#09CAB6; text-decoration:underline;">'
         "Unsubscribe</a></p>"
     )

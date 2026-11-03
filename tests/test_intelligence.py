@@ -8,7 +8,7 @@ import pytest
 from bidmatrix_monitor.intelligence import build_report, dedupe_items
 from bidmatrix_monitor.models import MonitorConfig, NewsItem, OutputSettings, SearchSettings, SourceConfig, Topic
 from bidmatrix_monitor.render import render_markdown, _event_line, write_report
-from bidmatrix_monitor.weekly import build_weekly_digest, render_weekly_markdown
+from bidmatrix_monitor.weekly import _select_weekly_items, build_weekly_digest, render_weekly_markdown
 from bidmatrix_monitor import delivery as delivery_module
 from bidmatrix_monitor import exa_client as exa_client_module
 from bidmatrix_monitor.delivery import _send_telegram, _telegram_message, _telegram_quality_gate_reasons
@@ -715,6 +715,28 @@ def test_weekly_digest_does_not_use_30d_fallback_when_week_is_thin(tmp_path) -> 
     assert digest["diagnostics"]["weekly_recent_30d_count"] == 0
     assert digest["diagnostics"]["weekly_fallback_level_used"] == "weekly_empty"
     assert digest["what_actually_happened"] == []
+
+
+def test_weekly_selector_fills_to_five_after_topic_diversity_pass() -> None:
+    run_date = date(2026, 11, 2)
+    items = [
+        {
+            "title": f"Company {index} measurement update",
+            "url": f"https://example.com/{index}",
+            "published_date": "2026-10-28",
+            "company_or_topic": f"Company {index}",
+            "summary": "Attribution and measurement platform update.",
+            "confidence": "high",
+            "source_label": "example.com (high-signal)",
+            "signal_type": "measurement",
+        }
+        for index in range(1, 6)
+    ]
+
+    selected, diagnostics = _select_weekly_items(items, run_date)
+
+    assert len(selected) == 5
+    assert diagnostics["weekly_selected_items_count"] == 5
 
 
 
