@@ -91,7 +91,8 @@ def test_weekly_email_html_contains_links_and_external_sections() -> None:
     assert "AppLovin expanded its AI-driven performance advertising platform" in html
     assert "BidMatrix ·" in html
     assert "bid-matrix.com" in html
-    assert "60 Paya Lebar Road" in html
+    assert "8 Eu Tong Sen Street" in html
+    assert "Singapore 059818" in html
     assert "{{{RESEND_UNSUBSCRIBE_URL}}}" in html
     assert "utm_source=bidmatrix_weekly_email" in html
     assert "utm_medium=email" in html
@@ -105,13 +106,17 @@ def test_weekly_email_public_footer_includes_configured_company_address(monkeypa
     rendered = weekly_email.render_weekly_email_html(_digest())
 
     assert "BidMatrix Ltd, 1 Example Street, London" in rendered
-    assert "You are receiving this weekly industry brief" in rendered
+    assert "You are receiving this weekly industry brief" not in rendered
+    assert "Unsubscribe" in rendered
 
 
 def test_weekly_email_text_contains_public_footer_and_tracked_source() -> None:
     rendered = weekly_email.render_weekly_email_text(_digest())
 
-    assert "BidMatrix · bid-matrix.com" in rendered
+    assert "BidMatrix · https://www.bid-matrix.com?" in rendered
+    assert "utm_source=bidmatrix_weekly_email" in rendered
+    assert "https://www.bid-matrix.com?utm_source=bidmatrix_weekly_email&utm_medium=email" in rendered
+    assert "utm_content=footer" not in rendered
     assert "Unsubscribe: {{{RESEND_UNSUBSCRIBE_URL}}}" in rendered
     assert "utm_source=bidmatrix_weekly_email" in rendered
 
@@ -152,10 +157,10 @@ def test_weekly_email_public_launch_intro_appears_only_when_enabled() -> None:
     launch_html = weekly_email.render_weekly_email_html(public_launch_digest)
     regular_html = weekly_email.render_weekly_email_html(regular_digest)
 
-    assert "Hello from the BidMatrix team! 👋" in launch_text
-    assert "Welcome to the BidMatrix Weekly Growth Brief" in launch_html
-    assert "Every week, we’ll select the most relevant news" in launch_html
-    assert "Hello from the BidMatrix team! 👋" not in regular_html
+    assert "Hello from BidMatrix! 👋" in launch_text
+    assert "This is the BidMatrix Weekly Growth Brief" in launch_html
+    assert "Every week, we’ll share" in launch_html
+    assert "Hello from BidMatrix! 👋" not in regular_html
     assert "{{{RESEND_UNSUBSCRIBE_URL}}}" in launch_html
 
 
@@ -192,9 +197,10 @@ def test_build_weekly_email_preview_writes_html_text_and_manifest(monkeypatch, t
 
     seen: dict[str, object] = {}
 
-    def fake_build_weekly_digest(report_dir: Path, days: int) -> dict:
+    def fake_build_weekly_digest(report_dir: Path, days: int, *, run_date=None) -> dict:
         seen["report_dir"] = report_dir
         seen["days"] = days
+        seen["run_date"] = run_date
         return _digest()
 
     monkeypatch.setattr(weekly_email, "build_weekly_digest", fake_build_weekly_digest)
@@ -206,7 +212,7 @@ def test_build_weekly_email_preview_writes_html_text_and_manifest(monkeypatch, t
         source_report_dir=source_dir,
     )
 
-    assert seen == {"report_dir": source_dir, "days": 7}
+    assert seen == {"report_dir": source_dir, "days": 7, "run_date": date(2026, 8, 14)}
     assert html_path == output_dir / "weekly-email-preview-2026-08-14.html"
     assert text_path == output_dir / "weekly-email-preview-2026-08-14.txt"
     assert manifest_path == output_dir / "weekly-email-preview-2026-08-14.json"
@@ -234,7 +240,11 @@ def test_build_weekly_email_preview_uses_requested_run_date_when_digest_has_no_d
 ) -> None:
     digest_without_date = dict(_digest())
     digest_without_date.pop("run_date")
-    monkeypatch.setattr(weekly_email, "build_weekly_digest", lambda report_dir, days: digest_without_date)
+    monkeypatch.setattr(
+        weekly_email,
+        "build_weekly_digest",
+        lambda report_dir, days, run_date=None: digest_without_date,
+    )
 
     _html_path, text_path, manifest_path, digest = weekly_email.build_weekly_email_preview(
         tmp_path,
@@ -325,7 +335,7 @@ def test_weekly_email_preview_prefers_pipeline_selected_digest_items(monkeypatch
         encoding="utf-8",
     )
 
-    def fake_build_weekly_digest(report_dir: Path, days: int) -> dict:
+    def fake_build_weekly_digest(report_dir: Path, days: int, *, run_date=None) -> dict:
         return {
             **_digest(),
             "what_actually_happened": [
@@ -449,7 +459,7 @@ def test_weekly_email_preview_uses_distinct_companies_for_main_items(monkeypatch
     monkeypatch.setattr(
         weekly_email,
         "build_weekly_digest",
-        lambda report_dir, days: {
+        lambda report_dir, days, run_date=None: {
             **_digest(),
             "what_actually_happened": [
                 {
@@ -540,7 +550,7 @@ def test_weekly_email_preview_fills_ready_telegram_weekly_digest_to_five(
     monkeypatch.setattr(
         weekly_email,
         "build_weekly_digest",
-        lambda report_dir, days: {
+        lambda report_dir, days, run_date=None: {
             **_digest(),
             "what_actually_happened": [
                 {"company": "Lifesight", "event": "open-sourced its Horizon forecasting engine.", "source": "adexchanger.com"},
@@ -600,7 +610,11 @@ def test_weekly_email_manifest_counts_distinct_companies_only(monkeypatch, tmp_p
             },
         ],
     }
-    monkeypatch.setattr(weekly_email, "build_weekly_digest", lambda report_dir, days: digest)
+    monkeypatch.setattr(
+        weekly_email,
+        "build_weekly_digest",
+        lambda report_dir, days, run_date=None: digest,
+    )
 
     _html_path, text_path, manifest_path, _digest_result = weekly_email.build_weekly_email_preview(
         tmp_path,
@@ -641,7 +655,11 @@ def test_weekly_email_manifest_requires_five_distinct_companies(monkeypatch, tmp
         ],
         "limited_signal_volume": False,
     }
-    monkeypatch.setattr(weekly_email, "build_weekly_digest", lambda report_dir, days: digest)
+    monkeypatch.setattr(
+        weekly_email,
+        "build_weekly_digest",
+        lambda report_dir, days, run_date=None: digest,
+    )
 
     _html_path, _text_path, manifest_path, _digest_result = weekly_email.build_weekly_email_preview(
         tmp_path,
@@ -1141,6 +1159,14 @@ def test_public_intro_is_limited_to_configured_date(monkeypatch) -> None:
 
     assert weekly_email._public_intro_enabled(date(2026, 11, 2)) is True
     assert weekly_email._public_intro_enabled(date(2026, 11, 9)) is False
+
+
+def test_public_intro_explains_the_weekly_bidmatrix_digest() -> None:
+    intro = weekly_email.WEEKLY_EMAIL_PUBLIC_LAUNCH_INTRO
+
+    assert "BidMatrix Weekly Growth Brief" in intro
+    assert "weekly roundup" in intro
+    assert "Every week" in intro
 
 
 def test_resend_retries_transient_network_failure(monkeypatch) -> None:
