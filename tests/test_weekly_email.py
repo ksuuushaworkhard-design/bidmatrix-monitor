@@ -1674,8 +1674,11 @@ def test_weekly_email_github_workflow_runs_monday_morning_moscow_without_telegra
     assert "WEEKLY_EMAIL_SEGMENT_ID" in workflow
     assert "WEEKLY_EMAIL_TO" in workflow
     assert "WEEKLY_EMAIL_PUBLIC_LAUNCH: 'true'" in workflow
-    assert "WEEKLY_EMAIL_REQUIRE_APPROVAL: 'true'" in workflow
-    assert "WEEKLY_EMAIL_APPROVED" in workflow
+    assert "WEEKLY_EMAIL_REQUIRE_APPROVAL: 'false'" in workflow
+    assert "WEEKLY_EMAIL_APPROVED" not in workflow
+    assert "Sync newsletter subscribers" not in workflow
+    assert "GOOGLE_SERVICE_ACCOUNT_JSON" not in workflow
+    assert "GOOGLE_SHEETS_SPREADSHEET_ID" not in workflow
     assert "TELEGRAM_BOT_TOKEN" not in workflow
     assert "BIDMATRIX_DELIVERY_CHANNEL" not in workflow
     assert "\n        run: bidmatrix-monitor --weekly\n" not in workflow

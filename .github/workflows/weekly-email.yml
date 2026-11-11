@@ -23,7 +23,6 @@ jobs:
     timeout-minutes: 30
     env:
       PYTHONUNBUFFERED: '1'
-      SUBSCRIBER_SYNC_ENABLED: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON != '' }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -41,16 +40,6 @@ jobs:
       - name: Run pull request checks
         if: ${{ github.event_name == 'pull_request' }}
         run: pytest
-
-      - name: Sync newsletter subscribers
-        if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && env.SUBSCRIBER_SYNC_ENABLED == 'true' }}
-        env:
-          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
-          GOOGLE_SHEETS_SPREADSHEET_ID: ${{ secrets.GOOGLE_SHEETS_SPREADSHEET_ID }}
-          GOOGLE_SHEETS_SUBSCRIBER_RANGE: ${{ secrets.GOOGLE_SHEETS_SUBSCRIBER_RANGE }}
-          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
-          WEEKLY_EMAIL_SEGMENT_ID: ${{ secrets.WEEKLY_EMAIL_SEGMENT_ID }}
-        run: python -m bidmatrix_monitor.subscriber_sync
 
       - name: Restore recent daily report cache
         if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
@@ -82,8 +71,7 @@ jobs:
           WEEKLY_EMAIL_SEGMENT_ID: ${{ secrets.WEEKLY_EMAIL_SEGMENT_ID }}
           WEEKLY_EMAIL_TO: ${{ secrets.WEEKLY_EMAIL_TO || secrets.WEEKLY_EMAIL_TEST_TO }}
           WEEKLY_EMAIL_PUBLIC_LAUNCH: 'true'
-          WEEKLY_EMAIL_REQUIRE_APPROVAL: 'true'
-          WEEKLY_EMAIL_APPROVED: ${{ secrets.WEEKLY_EMAIL_APPROVED }}
+          WEEKLY_EMAIL_REQUIRE_APPROVAL: 'false'
           WEEKLY_EMAIL_PUBLIC_INTRO_DATE: ${{ secrets.WEEKLY_EMAIL_PUBLIC_INTRO_DATE }}
         run: bidmatrix-monitor --weekly-email-test-run --weekly-email-refresh-source-report
 
