@@ -107,9 +107,7 @@ def build_weekly_email_manifest(
     items_count = len(items)
     minimum_external_items = WEEKLY_EMAIL_MINIMUM_EXTERNAL_ITEMS
     external_send_ready = items_count >= minimum_external_items and not bool(digest.get("limited_signal_volume"))
-    approval_required = _env_flag("WEEKLY_EMAIL_REQUIRE_APPROVAL") or _env_flag(
-        "WEEKLY_EMAIL_PUBLIC_LAUNCH"
-    )
+    approval_required = _env_flag("WEEKLY_EMAIL_REQUIRE_APPROVAL")
     approved = not approval_required or _env_flag("WEEKLY_EMAIL_APPROVED")
     return {
         "status": "ready_to_send",
