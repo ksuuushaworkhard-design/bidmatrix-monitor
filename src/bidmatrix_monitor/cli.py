@@ -248,6 +248,8 @@ def main() -> None:
             f"external_send_ready={result.get('external_send_ready')} "
             f"skip_reason={result.get('skip_reason', '')}"
         )
+        if result["mode"] == "skipped":
+            raise SystemExit(3)
         return
 
     if args.weekly:

@@ -1135,9 +1135,27 @@ def test_weekly_email_public_approval_gate_blocks_unapproved_send(monkeypatch, t
     assert result["skip_reason"] == "approval_required"
 
 
-def test_public_launch_manifest_requires_explicit_approval(monkeypatch) -> None:
+def test_public_launch_manifest_does_not_require_approval_unless_enabled(monkeypatch) -> None:
     monkeypatch.setenv("WEEKLY_EMAIL_PUBLIC_LAUNCH", "true")
     monkeypatch.delenv("WEEKLY_EMAIL_REQUIRE_APPROVAL", raising=False)
+    monkeypatch.delenv("WEEKLY_EMAIL_APPROVED", raising=False)
+
+    manifest = weekly_email.build_weekly_email_manifest(
+        {"run_date": "2026-10-29", "items": [{"company": f"Company {index}"} for index in range(5)]},
+        date(2026, 10, 29),
+        Path("preview.html"),
+        Path("preview.txt"),
+        7,
+    )
+
+    assert manifest["approval_required"] is False
+    assert manifest["approved"] is True
+    assert manifest["send_approval_enforced"] is False
+
+
+def test_explicit_approval_flag_still_blocks_unapproved_manifest(monkeypatch) -> None:
+    monkeypatch.setenv("WEEKLY_EMAIL_PUBLIC_LAUNCH", "true")
+    monkeypatch.setenv("WEEKLY_EMAIL_REQUIRE_APPROVAL", "true")
     monkeypatch.delenv("WEEKLY_EMAIL_APPROVED", raising=False)
 
     manifest = weekly_email.build_weekly_email_manifest(
@@ -1497,6 +1515,39 @@ def test_weekly_email_test_run_cli_builds_and_sends_without_v1_delivery(
     assert "WEEKLY_EMAIL_TEST_RUN_STARTED" in output
     assert "WEEKLY_EMAIL_TEST_RUN_FINISHED mode=dry_run" in output
     assert "to=ksenia@bid-matrix.com, mark@bid-matrix.com, nastya@bid-matrix.com" in output
+
+
+def test_weekly_email_test_run_cli_fails_when_delivery_is_skipped(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    monkeypatch.setattr(
+        cli_module,
+        "load_config",
+        lambda path: SimpleNamespace(outputs=SimpleNamespace(report_dir=str(tmp_path))),
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "build_and_send_weekly_email_test_run",
+        lambda *args, **kwargs: {
+            "mode": "skipped",
+            "skip_reason": "insufficient_items:4_of_5",
+            "to": "Resend segment",
+            "from": "BidMatrix <weekly@updates.bid-matrix.com>",
+            "subject": "BidMatrix Weekly Growth Brief",
+            "html_path": str(tmp_path / "preview.html"),
+            "text_path": str(tmp_path / "preview.txt"),
+            "manifest_path": str(tmp_path / "preview.json"),
+            "items_count": 4,
+            "external_send_ready": False,
+        },
+    )
+    monkeypatch.setattr("sys.argv", ["bidmatrix-monitor", "--weekly-email-test-run"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_module.main()
+
+    assert exc_info.value.code == 3
+    assert "WEEKLY_EMAIL_TEST_RUN_FINISHED mode=skipped" in capsys.readouterr().out
 
 
 def test_weekly_email_test_run_can_refresh_source_report_without_delivery(
